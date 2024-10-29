@@ -13,33 +13,35 @@ import (
 type NetIO interface {
 	Start(context.Context, *sync.WaitGroup) (int, error)
 	WriteChannel() chan<- net.Buffers
+	Name() string
 }
 
 type engine struct {
 	// TODO: change this to a trie struct with IPNet as keys
 	peers   map[string]NetIO
 	devices []NetIO
-	config  *config.Config
+	conf    *config.Config
 }
 
 func New(conf *config.Config) *engine {
 	return &engine{
-		config: conf,
-		peers:  make(map[string]NetIO),
+		conf:  conf,
+		peers: make(map[string]NetIO),
 	}
 }
 
 func (e *engine) Start(ctx context.Context) error {
 	logrus.Info("Starting the engine")
 
-	udpTun := udp.New(e.config)
-	e.RegisterDevice(udpTun)
+	udpTunnel := udp.New(e.conf)
+	e.RegisterDevice(udpTunnel)
 
 	var wg sync.WaitGroup
 
-	for name, i := range e.devices {
+	for _, dev := range e.devices {
+		name := dev.Name()
 		logrus.Infof("Starting device %v", name)
-		n, err := i.Start(ctx, &wg)
+		n, err := dev.Start(ctx, &wg)
 		if err != nil {
 			logrus.WithError(err).Errorf("Failed to start %v - Skipping", name)
 			continue

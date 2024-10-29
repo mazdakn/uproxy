@@ -13,16 +13,17 @@ import (
 )
 
 type TunnelUDP struct {
-	conf   *config.Config
-	addr   string
-	conn   *net.UDPConn
-	writeC chan net.Buffers
+	conf       *config.Config
+	addr       string
+	conn       *net.UDPConn
+	writeC     chan net.Buffers
+	bufferSize int
 }
 
 func New(conf *config.Config) *TunnelUDP {
 	return &TunnelUDP{
-		conf: conf,
-		addr: conf.Addr,
+		addr:       conf.Address,
+		bufferSize: conf.MaxBufferSize,
 	}
 }
 
@@ -45,13 +46,13 @@ func (t *TunnelUDP) Start(ctx context.Context, wg *sync.WaitGroup) (int, error) 
 
 func (t *TunnelUDP) Read(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	logrus.Infof("Started goroutine reading from udp tunnel %v", t.addr)
+	logrus.Infof("Started goroutine reading from %v", t.Name())
 	var err error
-	buffer := make([]byte, t.conf.MaxBufferSize)
+	buffer := make([]byte, t.bufferSize)
 	for {
 		select {
 		case <-ctx.Done():
-			logrus.Infof("Stoped goroutine reading from udp tunnel %v", t.addr)
+			logrus.Infof("Stoped goroutine reading from %v", t.Name())
 			return
 		default:
 			err = t.conn.SetReadDeadline(time.Now().Add(time.Second))
@@ -77,27 +78,31 @@ func (t *TunnelUDP) Read(ctx context.Context, wg *sync.WaitGroup) {
 
 func (t *TunnelUDP) Write(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	logrus.Infof("Started goroutine writing to udp tunnel %v", t.addr)
+	logrus.Infof("Started goroutine writing to %v", t.Name())
 	var err error
 	var num int64
 	for {
 		select {
 		case <-ctx.Done():
-			logrus.Infof("Stoped goroutine writing to udp tunnel %v", t.addr)
+			logrus.Infof("Stoped goroutine writing to %v", t.Name())
 			return
 		case packets := <-t.writeC:
 			num, err = packets.WriteTo(t.conn)
 			if err != nil {
-				logrus.Errorf("Failed to write to udp tunnel %v", t.addr)
+				logrus.Errorf("Failed to write to %v", t.Name())
 				continue
 			}
-			logrus.Debugf("Sent %v packets via udp tunnel %v", num, t.addr)
+			logrus.Debugf("Sent %v packets via %v", num, t.Name())
 		}
 	}
 }
 
 func (t *TunnelUDP) WriteChannel() chan<- net.Buffers {
 	return t.writeC
+}
+
+func (t *TunnelUDP) Name() string {
+	return fmt.Sprintf("udp://%v", t.addr)
 }
 
 func handlePacket(buffer []byte) error {
