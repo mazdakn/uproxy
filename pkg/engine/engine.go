@@ -6,7 +6,8 @@ import (
 	"sync"
 
 	"github.com/mazdakn/uproxy/pkg/config"
-	"github.com/mazdakn/uproxy/pkg/tunnels/udp"
+	"github.com/mazdakn/uproxy/pkg/tun"
+	"github.com/mazdakn/uproxy/pkg/udp"
 	"github.com/sirupsen/logrus"
 )
 
@@ -35,6 +36,9 @@ func (e *engine) Start(ctx context.Context) error {
 
 	udpTunnel := udp.New(e.conf)
 	e.RegisterDevice(udpTunnel)
+
+	tunDev := tun.New(e.conf)
+	e.RegisterDevice(tunDev)
 
 	var wg sync.WaitGroup
 

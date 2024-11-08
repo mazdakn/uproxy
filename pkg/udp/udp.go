@@ -13,7 +13,6 @@ import (
 )
 
 type TunnelUDP struct {
-	conf       *config.Config
 	addr       string
 	conn       *net.UDPConn
 	writeC     chan net.Buffers
