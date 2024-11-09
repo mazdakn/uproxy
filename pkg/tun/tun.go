@@ -1,17 +1,14 @@
 package tun
 
 import (
-	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
-	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/mazdakn/uproxy/pkg/config"
-	"github.com/mazdakn/uproxy/pkg/packet"
-	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
 )
 
@@ -21,84 +18,26 @@ const (
 )
 
 type TunDevice struct {
-	conf   *config.Config
-	writeC chan net.Buffers
 	name   string
 	file   *os.File
+	writeC chan net.Buffers
 	mtu    int
 }
 
 func New(conf *config.Config) *TunDevice {
 	return &TunDevice{
-		name: "uproxy",
-		mtu:  1400,
+		name:   "uproxy",
+		mtu:    1400,
+		writeC: make(chan net.Buffers),
 	}
 }
 
-func (t *TunDevice) Start(ctx context.Context, wg *sync.WaitGroup) (int, error) {
+func (t *TunDevice) Start() error {
 	err := t.create()
 	if err != nil {
-		return 0, err
+		return err
 	}
-
-	go t.Read(ctx, wg)
-	go t.Write(ctx, wg)
-	return 2, nil
-}
-
-func (t *TunDevice) Read(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	logrus.Infof("Started goroutine reading from %v", t.Name())
-	//var err error
-	//var buffer net.Buffers
-	buffer := make([]byte, t.mtu) // or something else
-	for {
-		select {
-		case <-ctx.Done():
-			logrus.Infof("Stopped goroutine reading from %v", t.Name())
-			return
-		default:
-			err := t.file.SetReadDeadline(time.Now().Add(time.Second))
-			if err != nil {
-				logrus.Errorf("Failed to set read deadline")
-			}
-			num, err := t.file.Read(buffer)
-			if err != nil {
-				nerr, ok := err.(net.Error)
-				if ok && !nerr.Timeout() {
-					logrus.Errorf("failure in reading from %v", t.Name())
-				}
-			}
-			// Nothing recived.
-			if num == 0 {
-				continue
-			}
-			logrus.Infof("Received %v bytes from %v.", num, t.Name())
-			packet.Parse(buffer[:num])
-		}
-
-	}
-}
-
-func (t *TunDevice) Write(ctx context.Context, wg *sync.WaitGroup) {
-	defer wg.Done()
-	logrus.Infof("Started goroutine writing to %v", t.Name())
-	var err error
-	var num int64
-	for {
-		select {
-		case <-ctx.Done():
-			logrus.Infof("Stoped goroutine writing to %v", t.Name())
-			return
-		case packets := <-t.writeC:
-			num, err = packets.WriteTo(t.file)
-			if err != nil {
-				logrus.Errorf("Failed to write to %v", t.Name())
-				continue
-			}
-			logrus.Debugf("Sent %v packets via %v", num, t.Name())
-		}
-	}
+	return nil
 }
 
 func (t *TunDevice) create() error {
@@ -198,10 +137,22 @@ func (t *TunDevice) MTU() (int, error) {
 	return int(*(*int32)(unsafe.Pointer(&ifr[unix.IFNAMSIZ]))), nil
 }
 
-func (t *TunDevice) WriteChannel() chan<- net.Buffers {
-	return t.writeC
-}
-
 func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun %v", t.name)
+}
+
+func (t TunDevice) Backend() io.ReadWriter {
+	return t.file
+}
+
+func (t *TunDevice) SetReadDeadline(deadline time.Time) error {
+	err := t.file.SetReadDeadline(deadline)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t TunDevice) WriteC() chan net.Buffers {
+	return t.writeC
 }
