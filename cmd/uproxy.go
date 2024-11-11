@@ -28,14 +28,18 @@ func setupSignals(cancelFunc context.CancelFunc) {
 
 func main() {
 	logrus.Infof("Running uProxy %v", version)
-	conf := config.FromCmdline()
+	conf, err := config.FromCmdline()
+	if err != nil {
+		logrus.WithError(err).Errorf("Failed to parse config file")
+		os.Exit(1)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	setupSignals(cancel)
 
 	engineMgr := engine.New(conf)
-	err := engineMgr.Start(ctx)
+	err = engineMgr.Start(ctx)
 	if err != nil {
 		logrus.WithError(err).Error("Failure in running server")
 		os.Exit(1)
