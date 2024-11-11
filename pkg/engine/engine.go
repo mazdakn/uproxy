@@ -100,8 +100,14 @@ func (e *engine) DeviceReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup
 			if num == 0 {
 				continue
 			}
-			logrus.Infof("Received %v bytes from %v.", num, name)
-			packet.Parse(buffer[:num])
+			logrus.Debugf("Received %v bytes from %v.", num, name)
+			pkt := packet.New(buffer[:num])
+			err = pkt.Parse()
+			if err != nil {
+				logrus.WithError(err).Error("Failed to parse packet")
+				continue
+			}
+			logrus.Infof("Packet : %v", pkt)
 		}
 	}
 }
