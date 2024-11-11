@@ -1,29 +1,33 @@
 package udp
 
 import (
+	"context"
 	"fmt"
-	"io"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
+	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/sirupsen/logrus"
 )
 
 type TunnelUDP struct {
 	addr   string
 	conn   *net.UDPConn
-	writeC chan net.Buffers
+	writeC chan *packet.Packet
+	conf   *config.Config
 }
 
 func New(conf *config.Config) *TunnelUDP {
 	return &TunnelUDP{
+		conf:   conf,
 		addr:   conf.Address,
-		writeC: make(chan net.Buffers),
+		writeC: make(chan *packet.Packet, 16),
 	}
 }
 
-func (t *TunnelUDP) Start() error {
+func (t *TunnelUDP) Start(ctx context.Context, wg *sync.WaitGroup) error {
 	addr, err := net.ResolveUDPAddr("udp", t.addr)
 	if err != nil {
 		return fmt.Errorf("Invalid address. err: %w", err)
@@ -42,18 +46,24 @@ func (t *TunnelUDP) Name() string {
 	return fmt.Sprintf("udp://%v", t.addr)
 }
 
-func (t TunnelUDP) Backend() io.ReadWriter {
-	return t.conn
+func (t *TunnelUDP) WriteC() chan *packet.Packet {
+	return t.writeC
+}
+
+func (t *TunnelUDP) Read(pkt *packet.Packet) (int, error) {
+	// TODO: check ignored udp address to verify the endpoint
+	n, _, err := t.conn.ReadFrom(pkt.Bytes)
+	return n, err
 }
 
 func (t *TunnelUDP) SetReadDeadline(deadline time.Time) error {
-	err := t.conn.SetReadDeadline(deadline)
-	if err != nil {
-		return nil
-	}
-	return nil
+	return t.conn.SetReadDeadline(deadline)
 }
 
-func (t *TunnelUDP) WriteC() chan net.Buffers {
-	return t.writeC
+func (t *TunnelUDP) Write(pkt *packet.Packet) (int, error) {
+	return t.conn.WriteToUDP(pkt.Bytes, pkt.Endpoint)
+}
+
+func (t *TunnelUDP) SetWriteDeadline(deadline time.Time) error {
+	return t.conn.SetReadDeadline(deadline)
 }
