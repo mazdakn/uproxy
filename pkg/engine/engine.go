@@ -3,7 +3,9 @@ package engine
 import (
 	"context"
 	"net"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
@@ -26,7 +28,10 @@ func New(conf *config.Config) *engine {
 	}
 }
 
-func (e *engine) Start(ctx context.Context) error {
+func (e *engine) Start() error {
+	ctx, cancelFunc := setupSignals()
+	defer cancelFunc()
+
 	var wg sync.WaitGroup
 	logrus.Info("Starting the engine")
 
@@ -70,13 +75,8 @@ func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.Wait
 			logrus.Infof("Stopped goroutine reading from %v", name)
 			return
 		default:
-			err := dev.SetReadDeadline(time.Now().Add(time.Second))
-			if err != nil {
-				logrus.Errorf("Failed to set read deadline")
-			}
-			//num, err := t.conn.Read(buffer)
 			pkt := packet.New(e.conf.MaxBufferSize)
-			num, err := dev.Read(pkt)
+			num, err := dev.Read(pkt, time.Now().Add(time.Second))
 			if err != nil {
 				nerr, ok := err.(net.Error)
 				if ok && !nerr.Timeout() {
@@ -93,18 +93,19 @@ func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.Wait
 				logrus.WithError(err).Error("Failed to parse packet")
 				continue
 			}
-			logrus.Infof("Packet : %v", pkt)
+			logrus.Debugf("Packet : %v", pkt)
 
 			route := e.routeTable.Lookup(pkt.DstAddr())
 			if route == nil {
 				logrus.Warnf("not route entry found")
 				continue
 			}
+			logrus.Debugf("Sending packet to %v via endpoint %v", route.Endpoint, route.Device.Name())
 			if route.Endpoint != nil {
 				pkt.Endpoint = route.Endpoint
 			}
-			logrus.Infof("Sent packet to %v %v", dev.Name(), pkt.Endpoint)
-			route.Device.WriteC() <- pkt
+			writeC := route.Device.WriteC()
+			*writeC <- pkt
 		}
 	}
 }
@@ -115,22 +116,27 @@ func (e *engine) devWriter(ctx context.Context, dev routing.NetIO, wg *sync.Wait
 	logrus.Infof("Started goroutine writing to %v", name)
 	var err error
 	var num int
+	devChan := dev.WriteC()
 	for {
 		select {
 		case <-ctx.Done():
 			logrus.Infof("Stoped goroutine writing to %v", name)
 			return
-		case packets := <-dev.WriteC():
-			err = dev.SetWriteDeadline(time.Now().Add(time.Second))
-			if err != nil {
-				logrus.Errorf("Failed to set write deadline")
-			}
-			num, err = dev.Write(packets)
+		case packets := <-*devChan:
+			num, err = dev.Write(packets, time.Now().Add(time.Second))
 			if err != nil {
 				logrus.Errorf("Failed to write to %v", name)
 				continue
 			}
-			logrus.Debugf("Sent %v packets via %v", num, name)
+			if num != packets.Len() {
+				logrus.Errorf("Error in writing packet to %v", dev.Name())
+				continue
+			}
+			logrus.Debugf("Sent packet %v via %v", packets, name)
 		}
 	}
+}
+
+func setupSignals() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }

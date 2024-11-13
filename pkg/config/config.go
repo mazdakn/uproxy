@@ -50,6 +50,6 @@ func FromCmdline() (*Config, error) {
 		return nil, fmt.Errorf("Failed to parse the config file %v - err: %w", configFile, err)
 	}
 
-	logrus.Infof("Parsed config from command line: %v", config)
+	logrus.Debugf("Parsed config from command line: %v", config)
 	return &config, nil
 }

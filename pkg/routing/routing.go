@@ -16,13 +16,10 @@ import (
 type NetIO interface {
 	Start(context.Context, *sync.WaitGroup) error
 	Name() string
-	WriteC() chan *packet.Packet
+	WriteC() *chan *packet.Packet
 
-	Read(*packet.Packet) (int, error)
-	SetReadDeadline(time.Time) error
-
-	Write(*packet.Packet) (int, error)
-	SetWriteDeadline(time.Time) error
+	Read(*packet.Packet, time.Time) (int, error)
+	Write(*packet.Packet, time.Time) (int, error)
 }
 
 type routeEntry struct {
@@ -74,7 +71,7 @@ func (t *RouteTabel) ParseRoutes() error {
 				"destination": dest,
 				"device":      dev.Name(),
 				"endpoint":    epAddr,
-			}).Infof("Added route.")
+			}).Debugf("Added route.")
 		}
 	}
 
@@ -96,7 +93,7 @@ func (t *RouteTabel) RegisterDevice(dev NetIO) {
 }
 
 func (t *RouteTabel) Lookup(addr net.IP) *routeEntry {
-	logrus.Infof("Looking up addr %v", addr)
+	logrus.Debugf("Looking up addr %v", addr)
 	for cidr, entry := range t.routes {
 		_, cidrNet, _ := net.ParseCIDR(cidr) // TODO: fix it
 		if cidrNet.Contains(addr) {

@@ -115,22 +115,22 @@ func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun %v", t.name)
 }
 
-func (t TunDevice) WriteC() chan *packet.Packet {
-	return t.writeC
+func (t TunDevice) WriteC() *chan *packet.Packet {
+	return &t.writeC
 }
 
-func (t TunDevice) Read(pkt *packet.Packet) (int, error) {
+func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
+	err := t.file.SetReadDeadline(deadline)
+	if err != nil {
+		return 0, err
+	}
 	return t.file.Read(pkt.Bytes)
 }
 
-func (t *TunDevice) SetReadDeadline(deadline time.Time) error {
-	return t.file.SetReadDeadline(deadline)
-}
-
-func (t TunDevice) Write(pkt *packet.Packet) (int, error) {
+func (t TunDevice) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
+	err := t.file.SetWriteDeadline(deadline)
+	if err != nil {
+		return 0, err
+	}
 	return t.file.Write(pkt.Bytes)
-}
-
-func (t *TunDevice) SetWriteDeadline(deadline time.Time) error {
-	return t.file.SetWriteDeadline(deadline)
 }
