@@ -15,16 +15,15 @@ const (
 	defautMaxBufferSize int    = 1600
 )
 
-type peer struct {
-	Name         string   `yaml:"name"`
-	Endpoint     string   `yaml:"endpoint"`
+type Route struct {
 	Destinations []string `yaml:"destination"`
+	Endpoint     string   `yaml:"endpoint"`
 }
 
 type Config struct {
-	MaxBufferSize int    `yaml:"maxBufferSize"`
-	Address       string `yaml:"address"`
-	Peers         []peer `yaml:"peers"`
+	MaxBufferSize int     `yaml:"maxBufferSize"`
+	Address       string  `yaml:"address"`
+	Routes        []Route `yaml:"routes"`
 }
 
 func ApplyDefaults(config *Config) {
@@ -51,6 +50,6 @@ func FromCmdline() (*Config, error) {
 		return nil, fmt.Errorf("Failed to parse the config file %v - err: %w", configFile, err)
 	}
 
-	logrus.Infof("Parsed config from command line: %v", config)
+	logrus.Debugf("Parsed config from command line: %v", config)
 	return &config, nil
 }

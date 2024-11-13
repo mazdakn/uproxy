@@ -2,94 +2,81 @@ package engine
 
 import (
 	"context"
-	"io"
 	"net"
+	"os/signal"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
 	"github.com/mazdakn/uproxy/pkg/packet"
+	"github.com/mazdakn/uproxy/pkg/routing"
 	"github.com/mazdakn/uproxy/pkg/tun"
 	"github.com/mazdakn/uproxy/pkg/udp"
 	"github.com/sirupsen/logrus"
 )
 
-type NetIO interface {
-	Start() error
-	Name() string
-	Backend() io.ReadWriter
-	SetReadDeadline(time.Time) error
-	WriteC() chan net.Buffers
-}
-
 type engine struct {
-	// TODO: change this to a trie struct with IPNet as keys
-	peers   map[string]NetIO
-	devices []NetIO
-	conf    *config.Config
+	routeTable *routing.RouteTabel
+	conf       *config.Config
 }
 
 func New(conf *config.Config) *engine {
 	return &engine{
-		conf:  conf,
-		peers: make(map[string]NetIO),
+		conf:       conf,
+		routeTable: routing.New(conf),
 	}
 }
 
-func (e *engine) Start(ctx context.Context) error {
+func (e *engine) Start() error {
+	ctx, cancelFunc := setupSignals()
+	defer cancelFunc()
+
+	var wg sync.WaitGroup
 	logrus.Info("Starting the engine")
 
 	udpTunnel := udp.New(e.conf)
-	e.RegisterDevice(udpTunnel)
+	e.initDevice(ctx, udpTunnel, &wg)
 
+	// TODO: make creating tun device optional based on configs
 	tunDev := tun.New(e.conf)
-	e.RegisterDevice(tunDev)
+	e.initDevice(ctx, tunDev, &wg)
 
-	var wg sync.WaitGroup
-
-	for _, dev := range e.devices {
-		name := dev.Name()
-		logrus.Infof("Starting device %v", name)
-		err := dev.Start()
-		if err != nil {
-			logrus.WithError(err).Errorf("Failed to start %v - Skipping", name)
-			continue
-		}
-
-		wg.Add(2)
-		go e.DeviceReader(ctx, dev, &wg)
-		go e.DeviceWrite(ctx, dev, &wg)
-		logrus.Infof("Successfully started %v", name)
+	err := e.routeTable.ParseRoutes()
+	if err != nil {
+		return err
 	}
 
 	wg.Wait()
 	return nil
 }
 
-func (e *engine) RegisterDevice(dev NetIO) {
-	e.devices = append(e.devices, dev)
+func (e *engine) initDevice(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) error {
+	name := dev.Name()
+	logrus.Infof("Starting device %v", name)
+	if err := dev.Start(ctx, wg); err != nil {
+		return err
+	}
+	e.routeTable.RegisterDevice(dev)
+	wg.Add(2)
+	go e.devWriter(ctx, dev, wg)
+	go e.devReader(ctx, dev, wg)
+	logrus.Infof("Successfully started %v", name)
+	return nil
 }
 
-func (e *engine) RegisterPeer(name string, dev NetIO) {
-	e.peers[name] = dev
-}
-
-func (e *engine) DeviceReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
+func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
 	logrus.Infof("Started goroutine reading from %v", name)
-	buffer := make([]byte, e.conf.MaxBufferSize) // conf.MaxBufferSize
 	for {
 		select {
 		case <-ctx.Done():
 			logrus.Infof("Stopped goroutine reading from %v", name)
 			return
 		default:
-			err := dev.SetReadDeadline(time.Now().Add(time.Second))
-			if err != nil {
-				logrus.Errorf("Failed to set read deadline")
-			}
-			num, err := dev.Backend().Read(buffer)
+			pkt := packet.New(e.conf.MaxBufferSize)
+			num, err := dev.Read(pkt, time.Now().Add(time.Second))
 			if err != nil {
 				nerr, ok := err.(net.Error)
 				if ok && !nerr.Timeout() {
@@ -101,35 +88,55 @@ func (e *engine) DeviceReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup
 				continue
 			}
 			logrus.Debugf("Received %v bytes from %v.", num, name)
-			pkt := packet.New(buffer[:num])
-			err = pkt.Parse()
+			err = pkt.Parse(num)
 			if err != nil {
 				logrus.WithError(err).Error("Failed to parse packet")
 				continue
 			}
-			logrus.Infof("Packet : %v", pkt)
+			logrus.Debugf("Packet : %v", pkt)
+
+			route := e.routeTable.Lookup(pkt.DstAddr())
+			if route == nil {
+				logrus.Warnf("not route entry found")
+				continue
+			}
+			logrus.Debugf("Sending packet to %v via endpoint %v", route.Endpoint, route.Device.Name())
+			if route.Endpoint != nil {
+				pkt.Endpoint = route.Endpoint
+			}
+			writeC := route.Device.WriteC()
+			*writeC <- pkt
 		}
 	}
 }
 
-func (e *engine) DeviceWrite(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
+func (e *engine) devWriter(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
 	logrus.Infof("Started goroutine writing to %v", name)
 	var err error
-	var num int64
+	var num int
+	devChan := dev.WriteC()
 	for {
 		select {
 		case <-ctx.Done():
 			logrus.Infof("Stoped goroutine writing to %v", name)
 			return
-		case packets := <-dev.WriteC():
-			num, err = packets.WriteTo(dev.Backend())
+		case packets := <-*devChan:
+			num, err = dev.Write(packets, time.Now().Add(time.Second))
 			if err != nil {
 				logrus.Errorf("Failed to write to %v", name)
 				continue
 			}
-			logrus.Debugf("Sent %v packets via %v", num, name)
+			if num != packets.Len() {
+				logrus.Errorf("Error in writing packet to %v", dev.Name())
+				continue
+			}
+			logrus.Debugf("Sent packet %v via %v", packets, name)
 		}
 	}
+}
+
+func setupSignals() (context.Context, context.CancelFunc) {
+	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }

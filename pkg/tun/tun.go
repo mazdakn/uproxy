@@ -1,14 +1,15 @@
 package tun
 
 import (
+	"context"
 	"fmt"
-	"io"
-	"net"
 	"os"
+	"sync"
 	"time"
 	"unsafe"
 
 	"github.com/mazdakn/uproxy/pkg/config"
+	"github.com/mazdakn/uproxy/pkg/packet"
 	"golang.org/x/sys/unix"
 )
 
@@ -20,23 +21,26 @@ const (
 type TunDevice struct {
 	name   string
 	file   *os.File
-	writeC chan net.Buffers
+	writeC chan *packet.Packet
 	mtu    int
+	conf   *config.Config
 }
 
 func New(conf *config.Config) *TunDevice {
 	return &TunDevice{
+		conf:   conf,
 		name:   "uproxy",
 		mtu:    1400,
-		writeC: make(chan net.Buffers),
+		writeC: make(chan *packet.Packet, 16),
 	}
 }
 
-func (t *TunDevice) Start() error {
+func (t *TunDevice) Start(ctx context.Context, wg *sync.WaitGroup) error {
 	err := t.create()
 	if err != nil {
 		return err
 	}
+
 	return nil
 }
 
@@ -107,52 +111,26 @@ func (t *TunDevice) setMTU() error {
 	return nil
 }
 
-func (t *TunDevice) MTU() (int, error) {
-	// open datagram socket
-	fd, err := unix.Socket(
-		unix.AF_INET,
-		unix.SOCK_DGRAM|unix.SOCK_CLOEXEC,
-		0,
-	)
-	if err != nil {
-		return 0, err
-	}
-
-	defer unix.Close(fd)
-
-	// do ioctl call
-
-	var ifr [ifReqSize]byte
-	copy(ifr[:], t.name)
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		uintptr(fd),
-		uintptr(unix.SIOCGIFMTU),
-		uintptr(unsafe.Pointer(&ifr[0])),
-	)
-	if errno != 0 {
-		return 0, fmt.Errorf("failed to get MTU of TUN device: %w", errno)
-	}
-
-	return int(*(*int32)(unsafe.Pointer(&ifr[unix.IFNAMSIZ]))), nil
-}
-
 func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun %v", t.name)
 }
 
-func (t TunDevice) Backend() io.ReadWriter {
-	return t.file
+func (t TunDevice) WriteC() *chan *packet.Packet {
+	return &t.writeC
 }
 
-func (t *TunDevice) SetReadDeadline(deadline time.Time) error {
+func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
 	err := t.file.SetReadDeadline(deadline)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	return nil
+	return t.file.Read(pkt.Bytes)
 }
 
-func (t TunDevice) WriteC() chan net.Buffers {
-	return t.writeC
+func (t TunDevice) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
+	err := t.file.SetWriteDeadline(deadline)
+	if err != nil {
+		return 0, err
+	}
+	return t.file.Write(pkt.Bytes)
 }
