@@ -1,11 +1,9 @@
 package routing
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
@@ -14,7 +12,8 @@ import (
 )
 
 type NetIO interface {
-	Start(context.Context, *sync.WaitGroup) error
+	Start() error
+
 	Name() string
 	WriteC() *chan *packet.Packet
 

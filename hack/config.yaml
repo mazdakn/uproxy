@@ -1,5 +1,9 @@
 maxBufferSize: 1600
 address: 0.0.0.0:9999
+tun:
+  name: uproxy
+  address: 10.100.100.100/24
+  mtu: 1400
 routes:
   - destination:
     - 19.19.19.19/32

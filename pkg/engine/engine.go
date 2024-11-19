@@ -19,6 +19,8 @@ import (
 type engine struct {
 	routeTable *routing.RouteTabel
 	conf       *config.Config
+	tunDev     *tun.TunDevice
+	udpTun     *udp.TunnelUDP
 }
 
 func New(conf *config.Config) *engine {
@@ -28,19 +30,22 @@ func New(conf *config.Config) *engine {
 	}
 }
 
-func (e *engine) Start() error {
+func (e *engine) Run() error {
 	ctx, cancelFunc := setupSignals()
 	defer cancelFunc()
+
+	defer e.cleanup()
 
 	var wg sync.WaitGroup
 	logrus.Info("Starting the engine")
 
-	udpTunnel := udp.New(e.conf)
-	e.initDevice(ctx, udpTunnel, &wg)
+	e.udpTun = udp.New(e.conf)
+	e.initDevice(ctx, e.udpTun, &wg)
 
-	// TODO: make creating tun device optional based on configs
-	tunDev := tun.New(e.conf)
-	e.initDevice(ctx, tunDev, &wg)
+	if e.conf.Tun != nil {
+		e.tunDev = tun.New(e.conf)
+		e.initDevice(ctx, e.tunDev, &wg)
+	}
 
 	err := e.routeTable.ParseRoutes()
 	if err != nil {
@@ -54,7 +59,7 @@ func (e *engine) Start() error {
 func (e *engine) initDevice(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) error {
 	name := dev.Name()
 	logrus.Infof("Starting device %v", name)
-	if err := dev.Start(ctx, wg); err != nil {
+	if err := dev.Start(); err != nil {
 		return err
 	}
 	e.routeTable.RegisterDevice(dev)
@@ -63,6 +68,16 @@ func (e *engine) initDevice(ctx context.Context, dev routing.NetIO, wg *sync.Wai
 	go e.devReader(ctx, dev, wg)
 	logrus.Infof("Successfully started %v", name)
 	return nil
+}
+
+func (e *engine) cleanup() {
+	if e.tunDev != nil {
+		// Clean up tun device
+		err := e.tunDev.Stop()
+		if err != nil {
+			logrus.WithError(err).Errorf("Failed cleaning up %v", e.tunDev.Name())
+		}
+	}
 }
 
 func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) {
