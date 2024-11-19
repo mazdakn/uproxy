@@ -1,10 +1,8 @@
 package udp
 
 import (
-	"context"
 	"fmt"
 	"net"
-	"sync"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
@@ -26,7 +24,7 @@ func New(conf *config.Config) *TunnelUDP {
 	}
 }
 
-func (t *TunnelUDP) Start(ctx context.Context, wg *sync.WaitGroup) error {
+func (t *TunnelUDP) Start() error {
 	addr, err := net.ResolveUDPAddr("udp", t.addr)
 	if err != nil {
 		return fmt.Errorf("Invalid address. err: %w", err)

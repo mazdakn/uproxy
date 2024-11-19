@@ -13,7 +13,15 @@ const (
 	defaultFile         string = "config.yaml"
 	defaultAddress      string = "0.0.0.0:9999"
 	defautMaxBufferSize int    = 1600
+	defaultTunName      string = "uproxy"
+	defaultMTU          int    = 1400
 )
+
+type TunConfig struct {
+	Name    string `yaml:"name"`
+	Address string `yaml:"address"`
+	MTU     int    `yaml:"mtu"`
+}
 
 type Route struct {
 	Destinations []string `yaml:"destination"`
@@ -21,9 +29,10 @@ type Route struct {
 }
 
 type Config struct {
-	MaxBufferSize int     `yaml:"maxBufferSize"`
-	Address       string  `yaml:"address"`
-	Routes        []Route `yaml:"routes"`
+	MaxBufferSize int        `yaml:"maxBufferSize"`
+	Address       string     `yaml:"address"`
+	Tun           *TunConfig `yaml:"tun"`
+	Routes        []Route    `yaml:"routes"`
 }
 
 func ApplyDefaults(config *Config) {
@@ -32,6 +41,12 @@ func ApplyDefaults(config *Config) {
 	}
 	if config.Address == "" {
 		config.Address = defaultAddress
+	}
+	if config.Tun.Name == "" {
+		config.Tun.Name = defaultTunName
+	}
+	if config.Tun.MTU == 0 {
+		config.Tun.MTU = defaultMTU
 	}
 }
 

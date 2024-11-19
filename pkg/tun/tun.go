@@ -1,15 +1,14 @@
 package tun
 
 import (
-	"context"
 	"fmt"
 	"os"
-	"sync"
 	"time"
-	"unsafe"
 
 	"github.com/mazdakn/uproxy/pkg/config"
 	"github.com/mazdakn/uproxy/pkg/packet"
+	"github.com/sirupsen/logrus"
+	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
@@ -19,93 +18,63 @@ const (
 )
 
 type TunDevice struct {
-	name   string
-	file   *os.File
-	writeC chan *packet.Packet
-	mtu    int
-	conf   *config.Config
+	name    string
+	file    *os.File
+	writeC  chan *packet.Packet
+	mtu     int
+	address string
 }
 
 func New(conf *config.Config) *TunDevice {
 	return &TunDevice{
-		conf:   conf,
-		name:   "uproxy",
-		mtu:    1400,
-		writeC: make(chan *packet.Packet, 16),
+		name:    conf.Tun.Name,
+		mtu:     conf.Tun.MTU,
+		address: conf.Tun.Address,
+		writeC:  make(chan *packet.Packet, 16),
 	}
 }
 
-func (t *TunDevice) Start(ctx context.Context, wg *sync.WaitGroup) error {
+func (t *TunDevice) Start() error {
+	logrus.Infof("Creating tun device %v (address: %v, mtu: %v)", t.name, t.address, t.mtu)
 	err := t.create()
 	if err != nil {
 		return err
 	}
-
 	return nil
 }
 
 func (t *TunDevice) create() error {
-	nfd, err := unix.Open(cloneDevicePath, unix.O_RDWR|unix.O_CLOEXEC, 0)
+	la := netlink.NewLinkAttrs()
+	la.Name = t.name
+	la.MTU = t.mtu
+	tunDev := &netlink.Tuntap{
+		LinkAttrs: la,
+		Mode:      netlink.TUNTAP_MODE_TUN,
+		Flags:     netlink.TUNTAP_NO_PI,
+	}
+	err := netlink.LinkAdd(tunDev)
 	if err != nil {
-		/*f os.IsNotExist(err) {
-			return fmt.Errorf("failed", t.name, cloneDevicePath)
-		}*/
-		return err
+		return fmt.Errorf("failed to create tun device - err: %w", err)
 	}
 
-	ifr, err := unix.NewIfreq(t.name)
+	addr, err := netlink.ParseAddr(t.address)
 	if err != nil {
-		return err
-	}
-	// IFF_VNET_HDR enables the "tun status hack" via routineHackListener()
-	// where a null write will return EINVAL indicating the TUN is up.
-	ifr.SetUint16(unix.IFF_TUN | unix.IFF_NO_PI)
-	err = unix.IoctlIfreq(nfd, unix.TUNSETIFF, ifr)
-	if err != nil {
-		return err
+		return fmt.Errorf("invaid address %v - err: %w", t.address, err)
 	}
 
-	err = unix.SetNonblock(nfd, true)
+	err = netlink.AddrAdd(tunDev, addr)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to set address %v to tun device - err: %w", t.address, err)
 	}
 
-	t.file = os.NewFile(uintptr(nfd), cloneDevicePath)
-
-	err = t.setMTU()
+	err = netlink.LinkSetMTU(tunDev, t.mtu)
 	if err != nil {
-		return err
+		return fmt.Errorf("failed to set tun device mtu to %v - err: %w", t.mtu, err)
 	}
 
-	return nil
-}
-
-func (t *TunDevice) setMTU() error {
-	// open datagram socket
-	fd, err := unix.Socket(
-		unix.AF_INET,
-		unix.SOCK_DGRAM|unix.SOCK_CLOEXEC,
-		0,
-	)
+	err = netlink.LinkSetUp(tunDev)
 	if err != nil {
-		return err
-	}
-
-	defer unix.Close(fd)
-
-	// do ioctl call
-	var ifr [ifReqSize]byte
-	copy(ifr[:], t.name)
-	*(*uint32)(unsafe.Pointer(&ifr[unix.IFNAMSIZ])) = uint32(t.mtu)
-	_, _, errno := unix.Syscall(
-		unix.SYS_IOCTL,
-		uintptr(fd),
-		uintptr(unix.SIOCSIFMTU),
-		uintptr(unsafe.Pointer(&ifr[0])),
-	)
-
-	if errno != 0 {
-		return fmt.Errorf("failed to set MTU of TUN device: %w", errno)
+		return fmt.Errorf("failed to set tun device up - err: %w", err)
 	}
 
 	return nil
@@ -133,4 +102,16 @@ func (t TunDevice) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
 		return 0, err
 	}
 	return t.file.Write(pkt.Bytes)
+}
+
+func (t TunDevice) Stop() error {
+	link, err := netlink.LinkByName(t.name)
+	if err != nil {
+		return fmt.Errorf("failed to find tun device %v - err: %w", t.name, err)
+	}
+	err = netlink.LinkDel(link)
+	if err != nil {
+		return fmt.Errorf("failed to delete tun device %v - err: %w", t.name, err)
+	}
+	return nil
 }

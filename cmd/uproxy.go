@@ -21,7 +21,7 @@ func main() {
 	}
 
 	engineMgr := engine.New(conf)
-	err = engineMgr.Start()
+	err = engineMgr.Run()
 	if err != nil {
 		logrus.WithError(err).Error("Failure in running server")
 		os.Exit(1)
