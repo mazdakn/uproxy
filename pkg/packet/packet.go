@@ -1,6 +1,7 @@
 package packet
 
 import (
+	"encoding/binary"
 	"fmt"
 	"net"
 
@@ -62,19 +63,34 @@ func (p Packet) Protocol() byte {
 	return p.Bytes[9]
 }
 
+func (p Packet) SrcPort() uint16 {
+	l4Offset := (p.Bytes[0] & 0x0f) * 4
+	if p.ipv6 {
+		l4Offset = 40
+	}
+	return binary.BigEndian.Uint16(p.Bytes[l4Offset : l4Offset+2])
+}
+
+func (p Packet) DstPort() uint16 {
+	l4Offset := (p.Bytes[0] & 0x0f) * 4
+	if p.ipv6 {
+		l4Offset = 40
+	}
+	return binary.BigEndian.Uint16(p.Bytes[l4Offset+2 : l4Offset+4])
+}
+
 func (p Packet) String() string {
-	var proto string
 	switch p.Protocol() {
 	case unix.IPPROTO_UDP:
-		proto = "udp"
+		return fmt.Sprintf("udp(%v:%v -> %v:%v) len: %v",
+			p.SrcAddr().String(), p.SrcPort(), p.DstAddr().String(), p.DstPort(), p.Len())
 	case unix.IPPROTO_TCP:
-		proto = "tcp"
+		return fmt.Sprintf("tcp(%v:%v -> %v:%v) len: %v",
+			p.SrcAddr().String(), p.SrcPort(), p.DstAddr().String(), p.DstPort(), p.Len())
 	case unix.IPPROTO_ICMP:
-		proto = "icmp"
+		return fmt.Sprintf("icmp(%v -> %v) len: %v", p.SrcAddr().String(), p.DstAddr().String(), p.Len())
 	case unix.IPPROTO_ICMPV6:
-		proto = "icmp6"
-	default:
-		proto = "xxx"
+		return fmt.Sprintf("icmp6(%v -> %v) len: %v", p.SrcAddr().String(), p.DstAddr().String(), p.Len())
 	}
-	return fmt.Sprintf("%v(%v -> %v) len: %v", proto, p.SrcAddr().String(), p.DstAddr().String(), p.Len())
+	return "unknown packet"
 }

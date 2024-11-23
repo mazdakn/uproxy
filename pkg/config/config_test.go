@@ -8,7 +8,8 @@ import (
 
 func TestDefaults(t *testing.T) {
 	RegisterTestingT(t)
-	defaultConfig := newWithDefaults()
+	defaultConfig := Config{}
+	ApplyDefaults(&defaultConfig)
 	Expect(defaultConfig).To(Equal(&Config{
 		MaxBufferSize: defautMaxBufferSize,
 	}))
@@ -16,8 +17,11 @@ func TestDefaults(t *testing.T) {
 
 func TestDefaultCmdLine(t *testing.T) {
 	RegisterTestingT(t)
-	config := FromCmdline()
-	configDefault := newWithDefaults()
-	configDefault.Addr = defaultAddr
-	Expect(config).To(Equal(configDefault))
+	cliConfig, err := FromCmdline()
+	if err != nil {
+		t.Fail()
+	}
+	defaultConfig := Config{}
+	ApplyDefaults(&defaultConfig)
+	Expect(cliConfig).To(Equal(defaultConfig))
 }

@@ -9,12 +9,6 @@ import (
 	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
-	"golang.org/x/sys/unix"
-)
-
-const (
-	cloneDevicePath = "/dev/net/tun"
-	ifReqSize       = unix.IFNAMSIZ + 64
 )
 
 type TunDevice struct {
@@ -23,6 +17,7 @@ type TunDevice struct {
 	writeC  chan *packet.Packet
 	mtu     int
 	address string
+	dev     *netlink.Tuntap
 }
 
 func New(conf *config.Config) *TunDevice {
@@ -50,7 +45,8 @@ func (t *TunDevice) create() error {
 	tunDev := &netlink.Tuntap{
 		LinkAttrs: la,
 		Mode:      netlink.TUNTAP_MODE_TUN,
-		Flags:     netlink.TUNTAP_NO_PI,
+		Flags:     netlink.TUNTAP_NO_PI | netlink.TUNTAP_MULTI_QUEUE_DEFAULTS,
+		Queues:    1,
 	}
 	err := netlink.LinkAdd(tunDev)
 	if err != nil {
@@ -76,6 +72,12 @@ func (t *TunDevice) create() error {
 	if err != nil {
 		return fmt.Errorf("failed to set tun device up - err: %w", err)
 	}
+
+	if len(tunDev.Fds) == 0 {
+		return fmt.Errorf("no valid queue available for tun device")
+	}
+	t.dev = tunDev
+	t.file = tunDev.Fds[0]
 
 	return nil
 }
