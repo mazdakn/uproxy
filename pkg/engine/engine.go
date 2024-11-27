@@ -40,14 +40,20 @@ func (e *engine) Run() error {
 	logrus.Info("Starting the engine")
 
 	e.udpTun = udp.New(e.conf)
-	e.initDevice(ctx, e.udpTun, &wg)
+	err := e.initDevice(ctx, e.udpTun, &wg)
+	if err != nil {
+		return err
+	}
 
 	if e.conf.Tun != nil {
 		e.tunDev = tun.New(e.conf)
-		e.initDevice(ctx, e.tunDev, &wg)
+		err := e.initDevice(ctx, e.tunDev, &wg)
+		if err != nil {
+			return err
+		}
 	}
 
-	err := e.routeTable.ParseRoutes()
+	err = e.routeTable.ParseRoutes()
 	if err != nil {
 		return err
 	}
@@ -102,13 +108,13 @@ func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.Wait
 			if num == 0 {
 				continue
 			}
-			logrus.Debugf("Received %v bytes from %v.", num, name)
+			logrus.Infof("Received %v bytes from %v.", num, name)
 			err = pkt.Parse(num)
 			if err != nil {
 				logrus.WithError(err).Error("Failed to parse packet")
 				continue
 			}
-			logrus.Debugf("Packet : %v", pkt)
+			logrus.Infof("Packet : %v", pkt)
 
 			route := e.routeTable.Lookup(pkt.DstAddr())
 			if route == nil {
