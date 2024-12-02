@@ -2,8 +2,10 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -17,17 +19,19 @@ import (
 )
 
 type engine struct {
-	routeTable *RouteTabel
-	conf       *config.Config
-	tunDev     *tun.TunDevice
-	udpTun     *udp.TunnelUDP
-	proxy      *proxy.Proxy
+	conf *config.Config
+
+	tunDev *tun.TunDevice
+	udpTun *udp.TunnelUDP
+	proxy  *proxy.Proxy
+	drop   NetIO
+
+	policies []Policy
 }
 
 func New(conf *config.Config) *engine {
 	return &engine{
-		conf:       conf,
-		routeTable: NewRouteTable(conf),
+		conf: conf,
 	}
 }
 
@@ -47,7 +51,6 @@ func (e *engine) Run() error {
 	}
 
 	e.proxy = proxy.New()
-	e.routeTable.RegisterDevice(e.proxy)
 
 	if e.conf.Tun != nil {
 		e.tunDev = tun.New(e.conf)
@@ -57,7 +60,7 @@ func (e *engine) Run() error {
 		}
 	}
 
-	err = e.routeTable.ParseRoutes()
+	err = e.ParsePolicies()
 	if err != nil {
 		return err
 	}
@@ -72,7 +75,6 @@ func (e *engine) initDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) 
 	if err := dev.Start(); err != nil {
 		return err
 	}
-	e.routeTable.RegisterDevice(dev)
 	wg.Add(2)
 	go e.devWriter(ctx, dev, wg)
 	go e.devReader(ctx, dev, wg)
@@ -88,6 +90,78 @@ func (e *engine) cleanup() {
 			logrus.WithError(err).Errorf("Failed cleaning up %v", e.tunDev.Name())
 		}
 	}
+}
+
+func (e *engine) ParsePolicies() error {
+	for _, p := range e.conf.Policies {
+		if p.SrcAddr == "" && p.DstAddr == "" && p.DstPort == "" {
+			logrus.Errorf("No match provided: %v - Skipping.", p)
+			continue
+		}
+		if p.Action == "" {
+			logrus.Errorf("No action provided: %v - Skipping.", p)
+			continue
+		}
+
+		var err error
+		var rPolicy Policy
+		rPolicy.Action, rPolicy.Endpoint, err = e.policyAction(p.Action)
+		if err != nil {
+			logrus.WithError(err).Errorf("Error parsing action: %v - Skipping", p.Action)
+			continue
+		}
+		if p.SrcAddr != "" {
+			_, rPolicy.SrcNet, err = net.ParseCIDR(p.SrcAddr)
+			if err != nil {
+				logrus.WithError(err).Errorf("Invalid source cidr %v - Skipping", p.SrcAddr)
+				continue
+			}
+		}
+		if p.DstAddr != "" {
+			_, rPolicy.DstNet, err = net.ParseCIDR(p.DstAddr)
+			if err != nil {
+				logrus.WithError(err).Errorf("Invalid destination cidr %v - Skipping", p.DstAddr)
+				continue
+			}
+		}
+		rPolicy.Proto, rPolicy.DstPort = policyProtoPort(p.DstPort)
+
+		logrus.Debugf("Adding policy %#v", rPolicy)
+		e.policies = append(e.policies, rPolicy)
+	}
+
+	return nil
+}
+
+func (e engine) policyAction(action string) (NetIO, *net.UDPAddr, error) {
+	// Need to handle route action separately
+	if strings.HasPrefix(action, string(ActionRoute)) {
+		addr := strings.TrimLeft(action, "route=")
+		udpAddr, err := net.ResolveUDPAddr("udp", addr)
+		if err != nil {
+			return nil, nil, err
+		}
+		return e.udpTun, udpAddr, nil
+	}
+
+	switch Action(action) {
+	case ActionLocal:
+		if e.tunDev == nil {
+			return nil, nil, fmt.Errorf("local device not available")
+		}
+		return e.tunDev, nil, nil
+	case ActionProxy:
+		return e.proxy, nil, nil
+	case ActionDrop:
+		return e.drop, nil, nil
+	}
+	return nil, nil, fmt.Errorf("failed to parse action %v", action)
+}
+
+func (e engine) MatchPolicy(pkt *packet.Packet) *Policy {
+	logrus.Debugf("Looking up packet %v", pkt)
+	// TODO: implement policy mtching
+	return nil
 }
 
 func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
@@ -120,16 +194,16 @@ func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 			}
 			logrus.Infof("Packet : %v", pkt)
 
-			route := e.routeTable.Lookup(pkt.DstAddr())
-			if route == nil {
-				logrus.Warnf("not route entry found")
+			policy := e.MatchPolicy(pkt)
+			if policy == nil {
+				logrus.Warnf("not policy found")
 				continue
 			}
-			logrus.Debugf("Sending packet to %v via endpoint %v", route.Endpoint, route.Device.Name())
-			if route.Endpoint != nil {
-				pkt.Endpoint = route.Endpoint
+			logrus.Debugf("Sending packet to %v via endpoint %v", policy.Endpoint, policy.Action.Name())
+			if policy.Endpoint != nil {
+				pkt.Endpoint = policy.Endpoint
 			}
-			writeC := route.Device.WriteC()
+			writeC := policy.Action.WriteC()
 			*writeC <- pkt
 		}
 	}

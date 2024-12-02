@@ -4,11 +4,13 @@ tun:
   name: uproxy
   address: 10.100.100.100/24
   mtu: 1400
-routes:
-  - destination:
-    - 19.19.19.19/32
-    - 20.20.20.20/32
-    endpoint: udp://10.10.10.11:8888
-  - destination:
-    - 0.0.0.0/0
-    endpoint: proxy
+policies:
+  - dstAddr: 19.19.19.19/24
+    dstPort: tcp:8080  
+    action: route=10.10.10.11:8888
+  - dstAddr: 20.20.20.20/32
+    action: drop
+  - dstAddr: 30.30.30.30/32
+    action: local
+  - dstAddr: 0.0.0.0/0
+    action: proxy

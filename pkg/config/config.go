@@ -23,16 +23,19 @@ type TunConfig struct {
 	MTU     int    `yaml:"mtu"`
 }
 
-type Route struct {
-	Destinations []string `yaml:"destination"`
-	Endpoint     string   `yaml:"endpoint"`
+type Policy struct {
+	SrcAddr string `yaml:"srcAddr"`
+	DstAddr string `yaml:"dstAddr"`
+	DstPort string `yaml:"dstPort"`
+
+	Action string `yaml:"action"`
 }
 
 type Config struct {
 	MaxBufferSize int        `yaml:"maxBufferSize"`
 	Address       string     `yaml:"address"`
 	Tun           *TunConfig `yaml:"tun"`
-	Routes        []Route    `yaml:"routes"`
+	Policies      []Policy   `yaml:"policies"`
 }
 
 func ApplyDefaults(config *Config) {
