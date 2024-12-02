@@ -10,23 +10,24 @@ import (
 
 	"github.com/mazdakn/uproxy/pkg/config"
 	"github.com/mazdakn/uproxy/pkg/packet"
-	"github.com/mazdakn/uproxy/pkg/routing"
+	"github.com/mazdakn/uproxy/pkg/proxy"
 	"github.com/mazdakn/uproxy/pkg/tun"
 	"github.com/mazdakn/uproxy/pkg/udp"
 	"github.com/sirupsen/logrus"
 )
 
 type engine struct {
-	routeTable *routing.RouteTabel
+	routeTable *RouteTabel
 	conf       *config.Config
 	tunDev     *tun.TunDevice
 	udpTun     *udp.TunnelUDP
+	proxy      *proxy.Proxy
 }
 
 func New(conf *config.Config) *engine {
 	return &engine{
 		conf:       conf,
-		routeTable: routing.New(conf),
+		routeTable: NewRouteTable(conf),
 	}
 }
 
@@ -45,6 +46,9 @@ func (e *engine) Run() error {
 		return err
 	}
 
+	e.proxy = proxy.New()
+	e.routeTable.RegisterDevice(e.proxy)
+
 	if e.conf.Tun != nil {
 		e.tunDev = tun.New(e.conf)
 		err := e.initDevice(ctx, e.tunDev, &wg)
@@ -62,7 +66,7 @@ func (e *engine) Run() error {
 	return nil
 }
 
-func (e *engine) initDevice(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) error {
+func (e *engine) initDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) error {
 	name := dev.Name()
 	logrus.Infof("Starting device %v", name)
 	if err := dev.Start(); err != nil {
@@ -86,7 +90,7 @@ func (e *engine) cleanup() {
 	}
 }
 
-func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) {
+func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
 	logrus.Infof("Started goroutine reading from %v", name)
@@ -131,7 +135,7 @@ func (e *engine) devReader(ctx context.Context, dev routing.NetIO, wg *sync.Wait
 	}
 }
 
-func (e *engine) devWriter(ctx context.Context, dev routing.NetIO, wg *sync.WaitGroup) {
+func (e *engine) devWriter(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
 	logrus.Infof("Started goroutine writing to %v", name)

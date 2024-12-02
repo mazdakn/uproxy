@@ -1,29 +1,18 @@
-package routing
+package engine
 
 import (
 	"fmt"
 	"net"
 	"strings"
-	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
-	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/sirupsen/logrus"
 )
 
-type NetIO interface {
-	Start() error
-
-	Name() string
-	WriteC() *chan *packet.Packet
-
-	Read(*packet.Packet, time.Time) (int, error)
-	Write(*packet.Packet, time.Time) (int, error)
-}
-
 type routeEntry struct {
-	Device   NetIO
-	Endpoint *net.UDPAddr
+	Device     NetIO
+	Endpoint   *net.UDPAddr
+	OriginSock *net.UDPConn
 }
 
 type RouteTabel struct {
@@ -33,7 +22,7 @@ type RouteTabel struct {
 	conf    *config.Config
 }
 
-func New(conf *config.Config) *RouteTabel {
+func NewRouteTable(conf *config.Config) *RouteTabel {
 	return &RouteTabel{
 		conf:   conf,
 		routes: make(map[string]routeEntry),
