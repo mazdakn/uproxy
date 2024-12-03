@@ -4,27 +4,23 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"os/signal"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
 	"github.com/mazdakn/uproxy/pkg/packet"
-	"github.com/mazdakn/uproxy/pkg/proxy"
 	"github.com/mazdakn/uproxy/pkg/tun"
-	"github.com/mazdakn/uproxy/pkg/udp"
 	"github.com/sirupsen/logrus"
 )
 
 type engine struct {
 	conf *config.Config
 
-	tunDev *tun.TunDevice
-	udpTun *udp.TunnelUDP
-	proxy  *proxy.Proxy
-	drop   NetIO
+	tunDev    *tun.TunDevice
+	dropDev   *dropDevice
+	udpServer *udpServer
+	proxy     NetIO
 
 	policies []Policy
 }
@@ -44,13 +40,15 @@ func (e *engine) Run() error {
 	var wg sync.WaitGroup
 	logrus.Info("Starting the engine")
 
-	e.udpTun = udp.New(e.conf)
-	err := e.initDevice(ctx, e.udpTun, &wg)
+	e.udpServer = newUDPServer(e.conf)
+	err := e.initDevice(ctx, e.udpServer, &wg)
 	if err != nil {
 		return err
 	}
 
-	e.proxy = proxy.New()
+	e.dropDev = newDrop()
+
+	//e.proxy = proxy.New()
 
 	if e.conf.Tun != nil {
 		e.tunDev = tun.New(e.conf)
@@ -141,7 +139,7 @@ func (e engine) policyAction(action string) (NetIO, *net.UDPAddr, error) {
 		if err != nil {
 			return nil, nil, err
 		}
-		return e.udpTun, udpAddr, nil
+		return e.udpServer, udpAddr, nil
 	}
 
 	switch Action(action) {
@@ -153,15 +151,35 @@ func (e engine) policyAction(action string) (NetIO, *net.UDPAddr, error) {
 	case ActionProxy:
 		return e.proxy, nil, nil
 	case ActionDrop:
-		return e.drop, nil, nil
+		return e.dropDev, nil, nil
 	}
 	return nil, nil, fmt.Errorf("failed to parse action %v", action)
 }
 
-func (e engine) MatchPolicy(pkt *packet.Packet) *Policy {
+func (e engine) MatchPolicies(pkt *packet.Packet) *Policy {
 	logrus.Debugf("Looking up packet %v", pkt)
-	// TODO: implement policy mtching
+	for _, p := range e.policies {
+		if e.MatchPolicy(p, pkt) {
+			return &p
+		}
+	}
 	return nil
+}
+
+func (e engine) MatchPolicy(policy Policy, pkt *packet.Packet) bool {
+	if policy.DstNet != nil && !policy.DstNet.Contains(pkt.DstAddr()) {
+		return false
+	}
+	if policy.SrcNet != nil && !policy.SrcNet.Contains(pkt.SrcAddr()) {
+		return false
+	}
+	if policy.Proto != 0 && policy.Proto != pkt.Protocol() {
+		return false
+	}
+	if policy.DstPort != 0 && policy.DstPort != pkt.DstPort() {
+		return false
+	}
+	return true
 }
 
 func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
@@ -194,7 +212,7 @@ func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 			}
 			logrus.Infof("Packet : %v", pkt)
 
-			policy := e.MatchPolicy(pkt)
+			policy := e.MatchPolicies(pkt)
 			if policy == nil {
 				logrus.Warnf("not policy found")
 				continue
@@ -203,7 +221,7 @@ func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 			if policy.Endpoint != nil {
 				pkt.Endpoint = policy.Endpoint
 			}
-			writeC := policy.Action.WriteC()
+			writeC := policy.Action.Channel()
 			*writeC <- pkt
 		}
 	}
@@ -215,7 +233,7 @@ func (e *engine) devWriter(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 	logrus.Infof("Started goroutine writing to %v", name)
 	var err error
 	var num int
-	devChan := dev.WriteC()
+	devChan := dev.Channel()
 	for {
 		select {
 		case <-ctx.Done():
@@ -234,8 +252,4 @@ func (e *engine) devWriter(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 			logrus.Debugf("Sent packet %v via %v", packets, name)
 		}
 	}
-}
-
-func setupSignals() (context.Context, context.CancelFunc) {
-	return signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 }

@@ -14,7 +14,7 @@ import (
 type TunDevice struct {
 	name    string
 	file    *os.File
-	writeC  chan *packet.Packet
+	channel chan *packet.Packet
 	mtu     int
 	address string
 	dev     *netlink.Tuntap
@@ -25,7 +25,7 @@ func New(conf *config.Config) *TunDevice {
 		name:    conf.Tun.Name,
 		mtu:     conf.Tun.MTU,
 		address: conf.Tun.Address,
-		writeC:  make(chan *packet.Packet, 16),
+		channel: make(chan *packet.Packet, 16),
 	}
 }
 
@@ -86,8 +86,8 @@ func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun %v", t.name)
 }
 
-func (t TunDevice) WriteC() *chan *packet.Packet {
-	return &t.writeC
+func (t TunDevice) Channel() *chan *packet.Packet {
+	return &t.channel
 }
 
 func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {

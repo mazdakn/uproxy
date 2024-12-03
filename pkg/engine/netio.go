@@ -10,7 +10,7 @@ type NetIO interface {
 	Start() error
 
 	Name() string
-	WriteC() *chan *packet.Packet
+	Channel() *chan *packet.Packet
 
 	Read(*packet.Packet, time.Time) (int, error)
 	Write(*packet.Packet, time.Time) (int, error)
