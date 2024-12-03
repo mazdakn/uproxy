@@ -1,4 +1,4 @@
-package proxy
+package engine
 
 import (
 	"io"
@@ -8,7 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-type UDPClient struct {
+type udpClient struct {
 	dst *net.UDPAddr
 	src *net.UDPAddr
 
@@ -16,14 +16,14 @@ type UDPClient struct {
 	dstSock *net.UDPConn
 }
 
-func newUDPClient(src, dst *net.UDPAddr) *UDPClient {
-	return &UDPClient{
+func newUDPClient(src, dst *net.UDPAddr) *udpClient {
+	return &udpClient{
 		src: src,
 		dst: dst,
 	}
 }
 
-func (c *UDPClient) Start() error {
+func (c *udpClient) Start() error {
 	var err error
 
 	c.srcSock, err = net.DialUDP("udp", nil, c.src)
