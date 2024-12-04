@@ -1,4 +1,4 @@
-package packet
+package engine
 
 import (
 	"encoding/binary"
@@ -9,13 +9,12 @@ import (
 )
 
 type Packet struct {
-	Bytes    []byte
-	Size     int
-	ipv6     bool
-	Endpoint *net.UDPAddr
+	Bytes []byte
+	Size  int
+	ipv6  bool
 }
 
-func New(MaxBufferSize int) *Packet {
+func newPacket(MaxBufferSize int) *Packet {
 	return &Packet{
 		Bytes: make([]byte, MaxBufferSize),
 	}

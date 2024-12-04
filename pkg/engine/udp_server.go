@@ -6,19 +6,16 @@ import (
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
-	"github.com/mazdakn/uproxy/pkg/packet"
 )
 
 type udpServer struct {
-	addr    string
-	conn    *net.UDPConn
-	channel chan *packet.Packet
+	addr string
+	conn *net.UDPConn
 }
 
 func newUDPServer(conf *config.Config) *udpServer {
 	return &udpServer{
-		addr:    conf.Address,
-		channel: make(chan *packet.Packet, 16),
+		addr: conf.Address,
 	}
 }
 
@@ -39,24 +36,20 @@ func (s *udpServer) Name() string {
 	return fmt.Sprintf("udp://%v", s.addr)
 }
 
-func (s *udpServer) Channel() *chan *packet.Packet {
-	return &s.channel
-}
-
-func (s *udpServer) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
+func (s *udpServer) Read(pkt []byte, deadline time.Time) (int, error) {
 	err := s.conn.SetReadDeadline(deadline)
 	if err != nil {
 		return 0, err
 	}
 	// TODO: check ignored udp address to verify the endpoint
-	n, _, err := s.conn.ReadFrom(pkt.Bytes)
+	n, _, err := s.conn.ReadFrom(pkt)
 	return n, err
 }
 
-func (s *udpServer) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
+func (s *udpServer) Write(pkt []byte, endpoint *net.UDPAddr, deadline time.Time) (int, error) {
 	err := s.conn.SetWriteDeadline(deadline)
 	if err != nil {
 		return 0, err
 	}
-	return s.conn.WriteToUDP(pkt.Bytes, pkt.Endpoint)
+	return s.conn.WriteToUDP(pkt, endpoint)
 }

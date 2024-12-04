@@ -28,6 +28,22 @@ type Policy struct {
 	Endpoint *net.UDPAddr
 }
 
+func (p Policy) Match(pkt *Packet) bool {
+	if p.DstNet != nil && !p.DstNet.Contains(pkt.DstAddr()) {
+		return false
+	}
+	if p.SrcNet != nil && !p.SrcNet.Contains(pkt.SrcAddr()) {
+		return false
+	}
+	if p.Proto != 0 && p.Proto != pkt.Protocol() {
+		return false
+	}
+	if p.DstPort != 0 && p.DstPort != pkt.DstPort() {
+		return false
+	}
+	return true
+}
+
 func policyProtoPort(port string) (byte, uint16) {
 	if strings.HasPrefix(port, "udp:") {
 		return unix.IPPROTO_UDP, strToPort(strings.TrimLeft(port, "udp:"))

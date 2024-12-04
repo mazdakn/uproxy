@@ -2,11 +2,11 @@ package tun
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
-	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
@@ -14,7 +14,6 @@ import (
 type TunDevice struct {
 	name    string
 	file    *os.File
-	channel chan *packet.Packet
 	mtu     int
 	address string
 	dev     *netlink.Tuntap
@@ -25,7 +24,6 @@ func New(conf *config.Config) *TunDevice {
 		name:    conf.Tun.Name,
 		mtu:     conf.Tun.MTU,
 		address: conf.Tun.Address,
-		channel: make(chan *packet.Packet, 16),
 	}
 }
 
@@ -86,24 +84,20 @@ func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun %v", t.name)
 }
 
-func (t TunDevice) Channel() *chan *packet.Packet {
-	return &t.channel
-}
-
-func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
+func (t TunDevice) Read(pkt []byte, deadline time.Time) (int, error) {
 	err := t.file.SetReadDeadline(deadline)
 	if err != nil {
 		return 0, err
 	}
-	return t.file.Read(pkt.Bytes)
+	return t.file.Read(pkt)
 }
 
-func (t TunDevice) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
+func (t TunDevice) Write(pkt []byte, _ *net.UDPAddr, deadline time.Time) (int, error) {
 	err := t.file.SetWriteDeadline(deadline)
 	if err != nil {
 		return 0, err
 	}
-	return t.file.Write(pkt.Bytes)
+	return t.file.Write(pkt)
 }
 
 func (t TunDevice) Stop() error {

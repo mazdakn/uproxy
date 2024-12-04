@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
-	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/mazdakn/uproxy/pkg/tun"
 	"github.com/sirupsen/logrus"
 )
@@ -22,7 +21,8 @@ type engine struct {
 	udpServer *udpServer
 	proxy     NetIO
 
-	policies []Policy
+	policies    []Policy
+	connections []Connection
 }
 
 func New(conf *config.Config) *engine {
@@ -73,9 +73,8 @@ func (e *engine) initDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) 
 	if err := dev.Start(); err != nil {
 		return err
 	}
-	wg.Add(2)
-	go e.devWriter(ctx, dev, wg)
-	go e.devReader(ctx, dev, wg)
+	wg.Add(1)
+	go e.handleDevice(ctx, dev, wg)
 	logrus.Infof("Successfully started %v", name)
 	return nil
 }
@@ -156,35 +155,20 @@ func (e engine) policyAction(action string) (NetIO, *net.UDPAddr, error) {
 	return nil, nil, fmt.Errorf("failed to parse action %v", action)
 }
 
-func (e engine) MatchPolicies(pkt *packet.Packet) *Policy {
+func (e engine) MatchPolicies(pkt *Packet) *Policy {
 	logrus.Debugf("Looking up packet %v", pkt)
 	for _, p := range e.policies {
-		if e.MatchPolicy(p, pkt) {
+		if p.Match(pkt) {
 			return &p
 		}
 	}
 	return nil
 }
 
-func (e engine) MatchPolicy(policy Policy, pkt *packet.Packet) bool {
-	if policy.DstNet != nil && !policy.DstNet.Contains(pkt.DstAddr()) {
-		return false
-	}
-	if policy.SrcNet != nil && !policy.SrcNet.Contains(pkt.SrcAddr()) {
-		return false
-	}
-	if policy.Proto != 0 && policy.Proto != pkt.Protocol() {
-		return false
-	}
-	if policy.DstPort != 0 && policy.DstPort != pkt.DstPort() {
-		return false
-	}
-	return true
-}
-
-func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
+func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
+	pkt := newPacket(e.conf.MaxBufferSize)
 	logrus.Infof("Started goroutine reading from %v", name)
 	for {
 		select {
@@ -192,8 +176,7 @@ func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 			logrus.Infof("Stopped goroutine reading from %v", name)
 			return
 		default:
-			pkt := packet.New(e.conf.MaxBufferSize)
-			num, err := dev.Read(pkt, time.Now().Add(time.Second))
+			num, err := dev.Read(pkt.Bytes, time.Now().Add(time.Second))
 			if err != nil {
 				nerr, ok := err.(net.Error)
 				if ok && !nerr.Timeout() {
@@ -218,38 +201,24 @@ func (e *engine) devReader(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 				continue
 			}
 			logrus.Debugf("Sending packet to %v via endpoint %v", policy.Endpoint, policy.Action.Name())
-			if policy.Endpoint != nil {
-				pkt.Endpoint = policy.Endpoint
-			}
-			writeC := policy.Action.Channel()
-			*writeC <- pkt
-		}
-	}
-}
 
-func (e *engine) devWriter(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
-	defer wg.Done()
-	name := dev.Name()
-	logrus.Infof("Started goroutine writing to %v", name)
-	var err error
-	var num int
-	devChan := dev.Channel()
-	for {
-		select {
-		case <-ctx.Done():
-			logrus.Infof("Stoped goroutine writing to %v", name)
-			return
-		case packets := <-*devChan:
-			num, err = dev.Write(packets, time.Now().Add(time.Second))
+			var endpoint *net.UDPAddr
+			if policy.Endpoint != nil {
+				endpoint = policy.Endpoint
+			}
+
+			// Write Packet
+			outDev := policy.Action
+			num, err = outDev.Write(pkt.Bytes, endpoint, time.Now().Add(time.Second))
 			if err != nil {
 				logrus.Errorf("Failed to write to %v", name)
 				continue
 			}
-			if num != packets.Len() {
-				logrus.Errorf("Error in writing packet to %v", dev.Name())
+			if num != pkt.Len() {
+				logrus.Errorf("Error in writing packet to %v", outDev.Name())
 				continue
 			}
-			logrus.Debugf("Sent packet %v via %v", packets, name)
+			logrus.Debugf("Sent packet %v via %v", pkt, outDev.Name())
 		}
 	}
 }
