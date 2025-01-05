@@ -5,10 +5,9 @@ tun:
   address: 10.100.100.100/24
   mtu: 1400
 policies:
-  - dstAddr: 19.19.19.19/24
-    dstPort: tcp:8080  
+  - dstAddr: 10.100.100.50/32
     action: route=10.10.10.11:8888
-  - dstAddr: 20.20.20.20/32
+  - dstAddr: 10.100.100.20/32
     action: drop
   - dstAddr: 30.30.30.30/32
     action: local

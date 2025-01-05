@@ -2,11 +2,11 @@ package tun
 
 import (
 	"fmt"
-	"net"
 	"os"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
+	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/sirupsen/logrus"
 	"github.com/vishvananda/netlink"
 )
@@ -20,6 +20,9 @@ type TunDevice struct {
 }
 
 func New(conf *config.Config) *TunDevice {
+	if conf.Tun == nil {
+		return nil
+	}
 	return &TunDevice{
 		name:    conf.Tun.Name,
 		mtu:     conf.Tun.MTU,
@@ -28,6 +31,9 @@ func New(conf *config.Config) *TunDevice {
 }
 
 func (t *TunDevice) Start() error {
+	if t.name == "" {
+		return fmt.Errorf("tun device not configured")
+	}
 	logrus.Infof("Creating tun device %v (address: %v, mtu: %v)", t.name, t.address, t.mtu)
 	err := t.create()
 	if err != nil {
@@ -81,26 +87,32 @@ func (t *TunDevice) create() error {
 }
 
 func (t *TunDevice) Name() string {
-	return fmt.Sprintf("tun %v", t.name)
+	return fmt.Sprintf("tun://%v", t.name)
 }
 
-func (t TunDevice) Read(pkt []byte, deadline time.Time) (int, error) {
+func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
 	err := t.file.SetReadDeadline(deadline)
 	if err != nil {
 		return 0, err
 	}
-	return t.file.Read(pkt)
+	return t.file.Read(pkt.Bytes)
 }
 
-func (t TunDevice) Write(pkt []byte, _ *net.UDPAddr, deadline time.Time) (int, error) {
+func (t TunDevice) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
 	err := t.file.SetWriteDeadline(deadline)
 	if err != nil {
 		return 0, err
 	}
-	return t.file.Write(pkt)
+	return t.file.Write(pkt.Bytes)
 }
 
 func (t TunDevice) Stop() error {
+	if t.file != nil {
+		err := t.file.Close()
+		if err != nil {
+			return err
+		}
+	}
 	link, err := netlink.LinkByName(t.name)
 	if err != nil {
 		return fmt.Errorf("failed to find tun device %v - err: %w", t.name, err)

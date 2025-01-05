@@ -9,26 +9,33 @@ import (
 )
 
 type udpClient struct {
-	dst *net.UDPAddr
+	srcAddr, dstAddr string
+
 	src *net.UDPAddr
+	dst *net.UDPAddr
 
 	srcSock *net.UDPConn
 	dstSock *net.UDPConn
 }
 
-func newUDPClient(src, dst *net.UDPAddr) *udpClient {
+func newUDPClient(src, dst string) *udpClient {
 	return &udpClient{
-		src: src,
-		dst: dst,
+		srcAddr: src,
+		dstAddr: dst,
 	}
 }
 
 func (c *udpClient) Start() error {
 	var err error
 
-	c.srcSock, err = net.DialUDP("udp", nil, c.src)
+	c.src, err = net.ResolveUDPAddr("udp", c.srcAddr)
 	if err != nil {
-		return nil
+		return err
+	}
+
+	c.dst, err = net.ResolveUDPAddr("udp", c.dstAddr)
+	if err != nil {
+		return err
 	}
 
 	c.dstSock, err = net.DialUDP("udp", nil, c.dst)

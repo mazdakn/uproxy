@@ -1,23 +1,38 @@
-package engine
+package packet
 
 import (
 	"encoding/binary"
 	"fmt"
 	"net"
 
+	"github.com/google/gopacket"
+	"github.com/google/gopacket/layers"
 	"golang.org/x/sys/unix"
 )
+
+type Metadata struct {
+	SrcIndex  uint8
+	Endpoint  *net.UDPAddr
+	SrcSocket net.Conn
+}
 
 type Packet struct {
 	Bytes []byte
 	Size  int
 	ipv6  bool
+	pkt   gopacket.Packet
+
+	Meta Metadata
 }
 
-func newPacket(MaxBufferSize int) *Packet {
+func New(MaxBufferSize int) *Packet {
 	return &Packet{
 		Bytes: make([]byte, MaxBufferSize),
 	}
+}
+
+func (p *Packet) Reset() {
+	p.Meta = Metadata{}
 }
 
 func (p *Packet) Parse(size int) error {
@@ -30,6 +45,13 @@ func (p *Packet) Parse(size int) error {
 	if p.ipv6 && len(p.Bytes) < 40 {
 		return fmt.Errorf("Short ipv6 packet length=%v", len(p.Bytes))
 	}
+
+	if p.ipv6 {
+		p.pkt = gopacket.NewPacket(p.Bytes, layers.LayerTypeIPv6, gopacket.Default)
+	} else {
+		p.pkt = gopacket.NewPacket(p.Bytes, layers.LayerTypeIPv4, gopacket.Default)
+	}
+
 	return nil
 }
 
@@ -78,7 +100,14 @@ func (p Packet) DstPort() uint16 {
 	return binary.BigEndian.Uint16(p.Bytes[l4Offset+2 : l4Offset+4])
 }
 
+func (p Packet) Payload() []byte {
+	start := (p.Bytes[0]<<4)*32 + 8
+	return p.Bytes[start:] // only for ipv4 + udp
+}
+
 func (p Packet) String() string {
+	p.pkt.Dump()
+
 	switch p.Protocol() {
 	case unix.IPPROTO_UDP:
 		return fmt.Sprintf("udp(%v:%v -> %v:%v) len: %v",
@@ -92,4 +121,19 @@ func (p Packet) String() string {
 		return fmt.Sprintf("icmp6(%v -> %v) len: %v", p.SrcAddr().String(), p.DstAddr().String(), p.Len())
 	}
 	return "unknown packet"
+}
+
+func ProtoToString(proto byte) string {
+	switch proto {
+	case unix.IPPROTO_TCP:
+		return "tcp"
+	case unix.IPPROTO_UDP:
+		return "udp"
+	case unix.IPPROTO_ICMP:
+		return "icmp"
+	case unix.IPPROTO_ICMPV6:
+		return "icmpv6"
+	default:
+		return "unsupported"
+	}
 }

@@ -2,22 +2,30 @@ package engine
 
 import (
 	"net"
+	"time"
+
+	"github.com/mazdakn/uproxy/pkg/packet"
 )
 
 type Connection struct {
-	SrcAddr *net.IP
-	DstAddr *net.IP
+	//InDev   NetIO
+	SrcAddr net.IP
+	DstAddr net.IP
 
 	Proto   byte
 	SrcPort uint16
 	DstPort uint16
 
-	Device   NetIO
-	Endpoint *net.UDPAddr
-	Conn     *net.Conn
+	//OutDev   NetIO
+	//Endpoint *net.UDPAddr
+	Conn       net.Conn
+	lastActive time.Time // TODO: change to monotonic time
 }
 
-func (c Connection) Lookup(pkt *Packet) bool {
+func (c Connection) Lookup(pkt *packet.Packet) bool {
+	/*if c.InDev.Name() != dev.Name() {
+		return false
+	}*/
 	if c.SrcAddr != nil && !c.SrcAddr.Equal(pkt.SrcAddr()) {
 		return false
 	}
@@ -34,4 +42,33 @@ func (c Connection) Lookup(pkt *Packet) bool {
 		return false
 	}
 	return true
+}
+
+type Connections struct {
+	connections []Connection
+}
+
+func newConnections() *Connections {
+	return &Connections{}
+}
+
+func (c Connections) Lookup(pkt *packet.Packet) *Connection {
+	for _, conn := range c.connections {
+		if conn.Lookup(pkt) {
+			return &conn
+		}
+	}
+	return nil
+}
+
+func (c *Connections) Add(pkt *packet.Packet, conn net.Conn) {
+	c.connections = append(c.connections, Connection{
+		SrcAddr:    pkt.SrcAddr(),
+		DstAddr:    pkt.DstAddr(),
+		SrcPort:    pkt.SrcPort(),
+		DstPort:    pkt.DstPort(),
+		Proto:      pkt.Protocol(),
+		Conn:       conn,
+		lastActive: time.Now(),
+	})
 }

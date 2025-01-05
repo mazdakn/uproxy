@@ -2,181 +2,112 @@ package engine
 
 import (
 	"context"
-	"fmt"
 	"net"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
+	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/mazdakn/uproxy/pkg/tun"
 	"github.com/sirupsen/logrus"
 )
 
 type engine struct {
-	conf *config.Config
-
-	tunDev    *tun.TunDevice
-	dropDev   *dropDevice
-	udpServer *udpServer
-	proxy     NetIO
-
-	policies    []Policy
-	connections []Connection
+	conf     *config.Config
+	devices  []NetIO
+	policies *PolicyTable
 }
 
 func New(conf *config.Config) *engine {
 	return &engine{
-		conf: conf,
+		conf:     conf,
+		policies: newPolicyTable(),
+		devices:  make([]NetIO, NetIO_Max),
 	}
 }
 
 func (e *engine) Run() error {
+	logrus.Info("Starting the engine")
 	ctx, cancelFunc := setupSignals()
 	defer cancelFunc()
 
 	defer e.cleanup()
 
+	err := e.policies.ParseConfig(e.conf)
+	if err != nil {
+		return err
+	}
+
+	e.startDevices()
+	logrus.Info("Started the engine")
+
 	var wg sync.WaitGroup
-	logrus.Info("Starting the engine")
+	e.runAndWait(ctx, &wg)
+	return nil
+}
 
-	e.udpServer = newUDPServer(e.conf)
-	err := e.initDevice(ctx, e.udpServer, &wg)
-	if err != nil {
-		return err
+func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) error {
+	udpDev := e.devices[NetIO_UDPServer]
+	if udpDev != nil {
+		wg.Add(1)
+		go e.handleDevice(ctx, udpDev, wg)
 	}
 
-	e.dropDev = newDrop()
-
-	//e.proxy = proxy.New()
-
-	if e.conf.Tun != nil {
-		e.tunDev = tun.New(e.conf)
-		err := e.initDevice(ctx, e.tunDev, &wg)
-		if err != nil {
-			return err
-		}
-	}
-
-	err = e.ParsePolicies()
-	if err != nil {
-		return err
+	tunDev := e.devices[NetIO_Local]
+	if tunDev != nil {
+		wg.Add(1)
+		go e.handleDevice(ctx, tunDev, wg)
 	}
 
 	wg.Wait()
 	return nil
 }
 
-func (e *engine) initDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) error {
-	name := dev.Name()
-	logrus.Infof("Starting device %v", name)
-	if err := dev.Start(); err != nil {
-		return err
+func (e engine) startDevices() {
+	e.devices[NetIO_UDPServer] = newUDPServer(e.conf)
+	e.devices[NetIO_Drop] = newDrop()
+	e.devices[NetIO_Proxy] = newProxy()
+	e.devices[NetIO_Local] = tun.New(e.conf)
+
+	for i, dev := range e.devices {
+		if dev == nil {
+			logrus.Debugf("no device found at index %v", i)
+			continue
+		}
+		err := dev.Start()
+		if err != nil {
+			logrus.WithError(err).Warnf("failed to start device %v", dev.Name())
+			continue
+		}
+		logrus.Infof("Successfully started %v", dev.Name())
 	}
-	wg.Add(1)
-	go e.handleDevice(ctx, dev, wg)
-	logrus.Infof("Successfully started %v", name)
-	return nil
 }
 
 func (e *engine) cleanup() {
-	if e.tunDev != nil {
-		// Clean up tun device
-		err := e.tunDev.Stop()
-		if err != nil {
-			logrus.WithError(err).Errorf("Failed cleaning up %v", e.tunDev.Name())
-		}
-	}
-}
-
-func (e *engine) ParsePolicies() error {
-	for _, p := range e.conf.Policies {
-		if p.SrcAddr == "" && p.DstAddr == "" && p.DstPort == "" {
-			logrus.Errorf("No match provided: %v - Skipping.", p)
+	for _, dev := range e.devices {
+		if dev == nil {
 			continue
 		}
-		if p.Action == "" {
-			logrus.Errorf("No action provided: %v - Skipping.", p)
-			continue
-		}
-
-		var err error
-		var rPolicy Policy
-		rPolicy.Action, rPolicy.Endpoint, err = e.policyAction(p.Action)
+		err := dev.Stop()
 		if err != nil {
-			logrus.WithError(err).Errorf("Error parsing action: %v - Skipping", p.Action)
-			continue
-		}
-		if p.SrcAddr != "" {
-			_, rPolicy.SrcNet, err = net.ParseCIDR(p.SrcAddr)
-			if err != nil {
-				logrus.WithError(err).Errorf("Invalid source cidr %v - Skipping", p.SrcAddr)
-				continue
-			}
-		}
-		if p.DstAddr != "" {
-			_, rPolicy.DstNet, err = net.ParseCIDR(p.DstAddr)
-			if err != nil {
-				logrus.WithError(err).Errorf("Invalid destination cidr %v - Skipping", p.DstAddr)
-				continue
-			}
-		}
-		rPolicy.Proto, rPolicy.DstPort = policyProtoPort(p.DstPort)
-
-		logrus.Debugf("Adding policy %#v", rPolicy)
-		e.policies = append(e.policies, rPolicy)
-	}
-
-	return nil
-}
-
-func (e engine) policyAction(action string) (NetIO, *net.UDPAddr, error) {
-	// Need to handle route action separately
-	if strings.HasPrefix(action, string(ActionRoute)) {
-		addr := strings.TrimLeft(action, "route=")
-		udpAddr, err := net.ResolveUDPAddr("udp", addr)
-		if err != nil {
-			return nil, nil, err
-		}
-		return e.udpServer, udpAddr, nil
-	}
-
-	switch Action(action) {
-	case ActionLocal:
-		if e.tunDev == nil {
-			return nil, nil, fmt.Errorf("local device not available")
-		}
-		return e.tunDev, nil, nil
-	case ActionProxy:
-		return e.proxy, nil, nil
-	case ActionDrop:
-		return e.dropDev, nil, nil
-	}
-	return nil, nil, fmt.Errorf("failed to parse action %v", action)
-}
-
-func (e engine) MatchPolicies(pkt *Packet) *Policy {
-	logrus.Debugf("Looking up packet %v", pkt)
-	for _, p := range e.policies {
-		if p.Match(pkt) {
-			return &p
+			logrus.WithError(err).Errorf("Failed cleaning up %v", dev.Name())
 		}
 	}
-	return nil
 }
 
 func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
-	pkt := newPacket(e.conf.MaxBufferSize)
+	pkt := packet.New(e.conf.MaxBufferSize)
 	logrus.Infof("Started goroutine reading from %v", name)
 	for {
+		pkt.Reset()
 		select {
 		case <-ctx.Done():
 			logrus.Infof("Stopped goroutine reading from %v", name)
 			return
 		default:
-			num, err := dev.Read(pkt.Bytes, time.Now().Add(time.Second))
+			num, err := dev.Read(pkt, time.Now().Add(time.Second))
 			if err != nil {
 				nerr, ok := err.(net.Error)
 				if ok && !nerr.Timeout() {
@@ -188,6 +119,7 @@ func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup
 				continue
 			}
 			logrus.Infof("Received %v bytes from %v.", num, name)
+
 			err = pkt.Parse(num)
 			if err != nil {
 				logrus.WithError(err).Error("Failed to parse packet")
@@ -195,30 +127,36 @@ func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup
 			}
 			logrus.Infof("Packet : %v", pkt)
 
-			policy := e.MatchPolicies(pkt)
+			policy := e.policies.Match(pkt)
 			if policy == nil {
 				logrus.Warnf("not policy found")
 				continue
 			}
-			logrus.Debugf("Sending packet to %v via endpoint %v", policy.Endpoint, policy.Action.Name())
 
-			var endpoint *net.UDPAddr
+			outDevIdx := policy.Action
+			outDev := e.devices[outDevIdx]
+			if outDev == nil {
+				logrus.Warnf("target device at index %v not available", outDevIdx)
+				continue
+			}
+			outDevName := outDev.Name()
+			logrus.Infof("Sending packet to %v via endpoint %v", policy.Endpoint, outDevName)
+
 			if policy.Endpoint != nil {
-				endpoint = policy.Endpoint
+				pkt.Meta.Endpoint = policy.Endpoint
 			}
 
 			// Write Packet
-			outDev := policy.Action
-			num, err = outDev.Write(pkt.Bytes, endpoint, time.Now().Add(time.Second))
+			num, err = outDev.Write(pkt, time.Now().Add(time.Second))
 			if err != nil {
-				logrus.Errorf("Failed to write to %v", name)
+				logrus.WithError(err).Errorf("Failed to write to %v", outDevName)
 				continue
 			}
 			if num != pkt.Len() {
-				logrus.Errorf("Error in writing packet to %v", outDev.Name())
+				logrus.Errorf("Error in writing packet to %v", outDevName)
 				continue
 			}
-			logrus.Debugf("Sent packet %v via %v", pkt, outDev.Name())
+			logrus.Infof("Sent packet %v via %v", pkt, outDevName)
 		}
 	}
 }
