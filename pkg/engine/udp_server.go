@@ -10,13 +10,15 @@ import (
 )
 
 type udpServer struct {
-	addr string
-	conn *net.UDPConn
+	addr  string
+	conn  *net.UDPConn
+	index uint8
 }
 
-func newUDPServer(conf *config.Config) *udpServer {
+func newUDPServer(conf *config.Config, index uint8) *udpServer {
 	return &udpServer{
-		addr: conf.Address,
+		addr:  conf.Address,
+		index: index,
 	}
 }
 
@@ -48,7 +50,9 @@ func (s *udpServer) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
 		return 0, err
 	}
 	// TODO: check ignored udp address to verify the endpoint
-	n, _, err := s.conn.ReadFrom(pkt.Bytes)
+	n, addr, err := s.conn.ReadFrom(pkt.Bytes)
+	pkt.Meta.Origin = addr
+	pkt.Meta.SrcIndex = s.index
 	return n, err
 }
 

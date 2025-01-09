@@ -64,10 +64,10 @@ func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) error {
 }
 
 func (e engine) startDevices() {
-	e.devices[NetIO_UDPServer] = newUDPServer(e.conf)
 	e.devices[NetIO_Drop] = newDrop()
+	e.devices[NetIO_UDPServer] = newUDPServer(e.conf, NetIO_UDPServer)
+	e.devices[NetIO_Local] = tun.New(e.conf, NetIO_Local)
 	e.devices[NetIO_Proxy] = newProxy()
-	e.devices[NetIO_Local] = tun.New(e.conf)
 
 	for i, dev := range e.devices {
 		if dev == nil {

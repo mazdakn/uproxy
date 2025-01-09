@@ -11,9 +11,12 @@ import (
 )
 
 type Metadata struct {
-	SrcIndex  uint8
-	Endpoint  *net.UDPAddr
-	SrcSocket net.Conn
+	// The followings are set when packet is read
+	SrcIndex uint8
+	Origin   net.Addr
+
+	// The following is set by policy matcher to endpoint packet should be sent
+	Endpoint *net.UDPAddr
 }
 
 type Packet struct {

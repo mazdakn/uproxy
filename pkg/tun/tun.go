@@ -17,9 +17,10 @@ type TunDevice struct {
 	mtu     int
 	address string
 	dev     *netlink.Tuntap
+	index   uint8
 }
 
-func New(conf *config.Config) *TunDevice {
+func New(conf *config.Config, index uint8) *TunDevice {
 	if conf.Tun == nil {
 		return nil
 	}
@@ -27,6 +28,7 @@ func New(conf *config.Config) *TunDevice {
 		name:    conf.Tun.Name,
 		mtu:     conf.Tun.MTU,
 		address: conf.Tun.Address,
+		index:   index,
 	}
 }
 
@@ -95,6 +97,8 @@ func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+
+	pkt.Meta.SrcIndex = t.index
 	return t.file.Read(pkt.Bytes)
 }
 
