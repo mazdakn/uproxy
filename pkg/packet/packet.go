@@ -14,6 +14,7 @@ type Metadata struct {
 	// The followings are set when packet is read
 	SrcIndex uint8
 	Origin   net.Addr
+	SrvConn  *net.UDPConn
 
 	// The following is set by policy matcher to endpoint packet should be sent
 	Endpoint *net.UDPAddr
@@ -106,6 +107,10 @@ func (p Packet) DstPort() uint16 {
 func (p Packet) Payload() []byte {
 	start := (p.Bytes[0]<<4)*32 + 8
 	return p.Bytes[start:] // only for ipv4 + udp
+}
+
+func (p Packet) Routed() bool {
+	return p.Meta.Endpoint != nil
 }
 
 func (p Packet) String() string {
