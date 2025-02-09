@@ -1,7 +1,5 @@
 package tun
 
-import "net"
-
 type Option func(*TunDevice)
 
 func WithName(name string) Option {
@@ -19,17 +17,5 @@ func WithMTU(mtu int) Option {
 func WithAddress(addr string) Option {
 	return func(t *TunDevice) {
 		t.address = addr
-	}
-}
-
-func WithEgress(udpConn *net.UDPConn) Option {
-	return func(t *TunDevice) {
-		t.udpConn = udpConn
-	}
-}
-
-func WithBufferSize(size int) Option {
-	return func(t *TunDevice) {
-		t.bufferSize = size
 	}
 }

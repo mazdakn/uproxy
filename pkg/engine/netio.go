@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"time"
-
 	"github.com/mazdakn/uproxy/pkg/packet"
 )
 
@@ -22,6 +20,6 @@ type NetIO interface {
 
 	Name() string
 
-	Read(*packet.Packet, time.Time) (int, error)
-	Write(*packet.Packet, time.Time) (int, error)
+	IngressChan() chan<- *packet.Packet
+	EgressChan() <-chan *packet.Packet
 }

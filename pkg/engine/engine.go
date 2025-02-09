@@ -2,9 +2,7 @@ package engine
 
 import (
 	"context"
-	"net"
 	"sync"
-	"time"
 
 	"github.com/mazdakn/uproxy/pkg/config"
 	"github.com/mazdakn/uproxy/pkg/packet"
@@ -46,7 +44,7 @@ func (e *engine) Run() error {
 	return nil
 }
 
-func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) error {
+func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) {
 	udpDev := e.devices[NetIO_UDPServer]
 	if udpDev != nil {
 		wg.Add(1)
@@ -60,7 +58,6 @@ func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) error {
 	}
 
 	wg.Wait()
-	return nil
 }
 
 func (e engine) startDevices() {
@@ -99,64 +96,39 @@ func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup
 	defer wg.Done()
 	name := dev.Name()
 	pkt := packet.New(e.conf.MaxBufferSize)
+	egressChan := dev.EgressChan()
 	logrus.Infof("Started goroutine reading from %v", name)
+
 	for {
-		pkt.Reset()
-		select {
-		case <-ctx.Done():
+		if ctx.Err() != nil {
 			logrus.Infof("Stopped goroutine reading from %v", name)
 			return
-		default:
-			num, err := dev.Read(pkt, time.Now().Add(time.Second))
-			if err != nil {
-				nerr, ok := err.(net.Error)
-				if ok && !nerr.Timeout() {
-					logrus.Errorf("failure in reading from %v", name)
-				}
-			}
-			// Nothing recived.
-			if num == 0 {
-				continue
-			}
-			logrus.Infof("Received %v bytes from %v.", num, name)
-
-			err = pkt.Parse(num)
-			if err != nil {
-				logrus.WithError(err).Error("Failed to parse packet")
-				continue
-			}
-			logrus.Infof("Packet : %v", pkt)
-
-			policy := e.policies.Match(pkt)
-			if policy == nil {
-				logrus.Warnf("not policy found")
-				continue
-			}
-
-			outDevIdx := policy.Action
-			outDev := e.devices[outDevIdx]
-			if outDev == nil {
-				logrus.Warnf("target device at index %v not available", outDevIdx)
-				continue
-			}
-			outDevName := outDev.Name()
-			logrus.Infof("Sending packet to %v via endpoint %v", policy.Endpoint, outDevName)
-
-			if policy.Endpoint != nil {
-				pkt.Meta.Endpoint = policy.Endpoint
-			}
-
-			// Write Packet
-			num, err = outDev.Write(pkt, time.Now().Add(time.Second))
-			if err != nil {
-				logrus.WithError(err).Errorf("Failed to write to %v", outDevName)
-				continue
-			}
-			if num != pkt.Len() {
-				logrus.Errorf("Error in writing packet to %v", outDevName)
-				continue
-			}
-			logrus.Infof("Sent packet %v via %v", pkt, outDevName)
 		}
+
+		pkt.Reset()
+		pkt := <-egressChan
+
+		policy := e.policies.Match(pkt)
+		if policy == nil {
+			logrus.Warnf("not policy found")
+			continue
+		}
+
+		outDevIdx := policy.Action
+		outDev := e.devices[outDevIdx]
+		if outDev == nil {
+			logrus.Warnf("target device at index %v not available", outDevIdx)
+			continue
+		}
+		outDevName := outDev.Name()
+		logrus.Infof("Sending packet to %v via endpoint %v", policy.Endpoint, outDevName)
+
+		if policy.Endpoint != nil {
+			pkt.Meta.Endpoint = policy.Endpoint
+		}
+
+		// Write Packet
+		outDev.IngressChan() <- pkt
+		logrus.Infof("Sent packet %v via %v", pkt, outDevName)
 	}
 }

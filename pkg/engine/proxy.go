@@ -9,12 +9,15 @@ import (
 )
 
 type proxyDevice struct {
-	connections *Connections
+	connections     *Connections
+	ingress, egress chan *packet.Packet
 }
 
 func newProxy() *proxyDevice {
 	return &proxyDevice{
 		connections: newConnections(),
+		ingress:     make(chan *packet.Packet, queueCapacity),
+		egress:      make(chan *packet.Packet, queueCapacity),
 	}
 }
 
@@ -29,6 +32,14 @@ func (p *proxyDevice) Stop() error {
 
 func (p *proxyDevice) Name() string {
 	return "proxy"
+}
+
+func (p proxyDevice) IngressChan() chan<- *packet.Packet {
+	return p.ingress
+}
+
+func (p proxyDevice) EgressChan() <-chan *packet.Packet {
+	return p.egress
 }
 
 func (p *proxyDevice) Read(_ *packet.Packet, _ time.Time) (int, error) {

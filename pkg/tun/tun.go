@@ -11,6 +11,10 @@ import (
 	"github.com/vishvananda/netlink"
 )
 
+const (
+	queueCapacity = 16
+)
+
 type TunDevice struct {
 	name    string
 	file    *os.File
@@ -18,6 +22,8 @@ type TunDevice struct {
 	address string
 	dev     *netlink.Tuntap
 	index   uint8
+
+	ingress, egress chan *packet.Packet
 }
 
 func New(conf *config.Config, index uint8) *TunDevice {
@@ -29,22 +35,24 @@ func New(conf *config.Config, index uint8) *TunDevice {
 		mtu:     conf.Tun.MTU,
 		address: conf.Tun.Address,
 		index:   index,
+		ingress: make(chan *packet.Packet, queueCapacity),
+		egress:  make(chan *packet.Packet, queueCapacity),
 	}
 }
 
 func (t *TunDevice) Start() error {
-	if t.name == "" {
-		return fmt.Errorf("tun device not configured")
-	}
-	logrus.Infof("Creating tun device %v (address: %v, mtu: %v)", t.name, t.address, t.mtu)
-	err := t.create()
-	if err != nil {
+	if err := t.create(); err != nil {
 		return err
 	}
 	return nil
 }
 
 func (t *TunDevice) create() error {
+	if t.name == "" {
+		return fmt.Errorf("tun device not configured")
+	}
+	logrus.Infof("Creating tun device %v (address: %v, mtu: %v)", t.name, t.address, t.mtu)
+
 	la := netlink.NewLinkAttrs()
 	la.Name = t.name
 	la.MTU = t.mtu
@@ -88,8 +96,34 @@ func (t *TunDevice) create() error {
 	return nil
 }
 
+func (t TunDevice) Stop() error {
+	if t.file != nil {
+		err := t.file.Close()
+		if err != nil {
+			return err
+		}
+	}
+	link, err := netlink.LinkByName(t.name)
+	if err != nil {
+		return fmt.Errorf("failed to find tun device %v - err: %w", t.name, err)
+	}
+	err = netlink.LinkDel(link)
+	if err != nil {
+		return fmt.Errorf("failed to delete tun device %v - err: %w", t.name, err)
+	}
+	return nil
+}
+
 func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun://%v", t.name)
+}
+
+func (t TunDevice) IngressChan() chan<- *packet.Packet {
+	return t.ingress
+}
+
+func (t TunDevice) EgressChan() <-chan *packet.Packet {
+	return t.egress
 }
 
 func (t TunDevice) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
@@ -108,22 +142,4 @@ func (t TunDevice) Write(pkt *packet.Packet, deadline time.Time) (int, error) {
 		return 0, err
 	}
 	return t.file.Write(pkt.Bytes)
-}
-
-func (t TunDevice) Stop() error {
-	if t.file != nil {
-		err := t.file.Close()
-		if err != nil {
-			return err
-		}
-	}
-	link, err := netlink.LinkByName(t.name)
-	if err != nil {
-		return fmt.Errorf("failed to find tun device %v - err: %w", t.name, err)
-	}
-	err = netlink.LinkDel(link)
-	if err != nil {
-		return fmt.Errorf("failed to delete tun device %v - err: %w", t.name, err)
-	}
-	return nil
 }

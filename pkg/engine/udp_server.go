@@ -9,16 +9,24 @@ import (
 	"github.com/mazdakn/uproxy/pkg/packet"
 )
 
+const (
+	queueCapacity = 16
+)
+
 type udpServer struct {
 	addr  string
 	conn  *net.UDPConn
 	index uint8
+
+	ingress, egress chan *packet.Packet
 }
 
 func newUDPServer(conf *config.Config, index uint8) *udpServer {
 	return &udpServer{
-		addr:  conf.Address,
-		index: index,
+		addr:    conf.Address,
+		index:   index,
+		ingress: make(chan *packet.Packet, queueCapacity),
+		egress:  make(chan *packet.Packet, queueCapacity),
 	}
 }
 
@@ -42,6 +50,14 @@ func (s *udpServer) Stop() error {
 
 func (s *udpServer) Name() string {
 	return fmt.Sprintf("udp://%v", s.addr)
+}
+
+func (t udpServer) IngressChan() chan<- *packet.Packet {
+	return t.ingress
+}
+
+func (t udpServer) EgressChan() <-chan *packet.Packet {
+	return t.egress
 }
 
 func (s *udpServer) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
