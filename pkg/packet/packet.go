@@ -13,7 +13,7 @@ import (
 type Metadata struct {
 	// The followings are set when packet is read
 	SrcIndex uint8
-	Origin   net.Addr
+	Origin   *net.UDPAddr
 	SrvConn  *net.UDPConn
 
 	// The following is set by policy matcher to endpoint packet should be sent
@@ -39,8 +39,8 @@ func (p *Packet) Reset() {
 	p.Meta = Metadata{}
 }
 
-func (p *Packet) Parse(size int) error {
-	p.Bytes = p.Bytes[:size]
+func (p *Packet) Parse() error {
+	p.Bytes = p.Bytes[:p.Size]
 	// At least 20 bytes (IPv4 header length) is needed
 	if len(p.Bytes) < 20 {
 		return fmt.Errorf("Short packet length=%v", len(p.Bytes))
@@ -113,9 +113,16 @@ func (p Packet) Routed() bool {
 	return p.Meta.Endpoint != nil
 }
 
-func (p Packet) String() string {
-	p.pkt.Dump()
+func (p Packet) Tuple() string {
+	// TODO: find a way to make this more efficient
+	return fmt.Sprintf("%v(%v:%v -> %v:%v)",
+		p.Protocol(),
+		p.SrcAddr(), p.SrcPort(),
+		p.DstAddr(), p.DstPort(),
+	)
+}
 
+func (p Packet) String() string {
 	switch p.Protocol() {
 	case unix.IPPROTO_UDP:
 		return fmt.Sprintf("udp(%v:%v -> %v:%v) len: %v",

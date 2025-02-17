@@ -66,7 +66,7 @@ func (s *udpServer) Read(pkt *packet.Packet, deadline time.Time) (int, error) {
 		return 0, err
 	}
 	// TODO: check ignored udp address to verify the endpoint
-	n, addr, err := s.conn.ReadFrom(pkt.Bytes)
+	n, addr, err := s.conn.ReadFromUDP(pkt.Bytes)
 	pkt.Meta.Origin = addr
 	pkt.Meta.SrcIndex = s.index
 	return n, err
