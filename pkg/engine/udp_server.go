@@ -52,11 +52,11 @@ func (s *udpServer) Name() string {
 	return fmt.Sprintf("udp://%v", s.addr)
 }
 
-func (t udpServer) IngressChan() chan<- *packet.Packet {
+func (t udpServer) Ingress() chan<- *packet.Packet {
 	return t.ingress
 }
 
-func (t udpServer) EgressChan() <-chan *packet.Packet {
+func (t udpServer) Egress() <-chan *packet.Packet {
 	return t.egress
 }
 

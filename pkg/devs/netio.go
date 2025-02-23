@@ -1,8 +1,6 @@
-package engine
+package devs
 
-import (
-	"github.com/mazdakn/uproxy/pkg/packet"
-)
+import "github.com/mazdakn/uproxy/pkg/packet"
 
 const (
 	NetIO_Drop = iota
@@ -20,6 +18,6 @@ type NetIO interface {
 
 	Name() string
 
-	IngressChan() chan<- *packet.Packet
-	EgressChan() <-chan *packet.Packet
+	Ingress() chan<- *packet.Packet
+	Egress() <-chan *packet.Packet
 }

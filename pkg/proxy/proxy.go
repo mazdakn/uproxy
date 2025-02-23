@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/mazdakn/uproxy/pkg/conntrack"
 	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/sys/unix"
@@ -18,17 +19,18 @@ const (
 )
 
 type Proxy struct {
-	lAddr       string
-	lConn       *net.UDPConn
-	ingress     chan *packet.Packet
-	connections map[string]chan *packet.Packet
+	lAddr   string
+	lConn   *net.UDPConn
+	ingress chan *packet.Packet
+	//connections map[string]chan *packet.Packet
+	connections *conntrack.ConnTable
 }
 
 func New(addr string) *Proxy {
 	return &Proxy{
 		lAddr:       addr,
 		ingress:     make(chan *packet.Packet, queueCapacity),
-		connections: make(map[string]chan *packet.Packet, queueCapacity),
+		connections: conntrack.New(),
 	}
 }
 
@@ -116,28 +118,32 @@ func (p *Proxy) handlePackets(ctx context.Context, wg *sync.WaitGroup) {
 				continue
 			}
 
-			clientChan, exists := p.connections[pkt.Tuple()]
-			if exists {
-				clientChan <- pkt
+			conn, exists := p.connections.Lookup(pkt)
+			if exists && conn.OutDev != nil {
+				conn.OutDev.Ingress() <- pkt
 				continue
 			}
 
 			// This is a new connection
 			wg.Add(1)
 			ingress := make(chan *packet.Packet, queueCapacity)
-			tuple := pkt.Tuple()
-			go p.handleClient(ctx, wg, tuple, &ingress)
-			p.connections[tuple] = ingress
+			go p.handleClient(ctx, wg, pkt, &ingress)
+			p.connections.Add(pkt)
 			ingress <- pkt
 		}
 	}
 }
 
-func (p *Proxy) handleClient(ctx context.Context, wg *sync.WaitGroup, tuple string, ingress *chan *packet.Packet) {
-	logrus.Infof("starting a new UDP client %v", tuple)
+func (p *Proxy) handleClient(
+	ctx context.Context,
+	wg *sync.WaitGroup,
+	initPkt *packet.Packet,
+	ingress *chan *packet.Packet,
+) {
+	logrus.Infof("starting a new UDP client %v", initPkt.Tuple())
 	defer func() {
 		// TODO: might need to lock
-		delete(p.connections, tuple)
+		p.connections.Delete(initPkt)
 		wg.Done()
 	}()
 	var pkts []*packet.Packet

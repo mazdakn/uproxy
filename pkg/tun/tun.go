@@ -118,11 +118,11 @@ func (t *TunDevice) Name() string {
 	return fmt.Sprintf("tun://%v", t.name)
 }
 
-func (t TunDevice) IngressChan() chan<- *packet.Packet {
+func (t TunDevice) Ingress() chan<- *packet.Packet {
 	return t.ingress
 }
 
-func (t TunDevice) EgressChan() <-chan *packet.Packet {
+func (t TunDevice) Egress() <-chan *packet.Packet {
 	return t.egress
 }
 

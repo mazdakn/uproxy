@@ -5,6 +5,7 @@ import (
 	"sync"
 
 	"github.com/mazdakn/uproxy/pkg/config"
+	"github.com/mazdakn/uproxy/pkg/devs"
 	"github.com/mazdakn/uproxy/pkg/packet"
 	"github.com/mazdakn/uproxy/pkg/tun"
 	"github.com/sirupsen/logrus"
@@ -12,7 +13,7 @@ import (
 
 type engine struct {
 	conf     *config.Config
-	devices  []NetIO
+	devices  []devs.NetIO
 	policies *PolicyTable
 }
 
@@ -20,7 +21,7 @@ func New(conf *config.Config) *engine {
 	return &engine{
 		conf:     conf,
 		policies: newPolicyTable(),
-		devices:  make([]NetIO, NetIO_Max),
+		devices:  make([]devs.NetIO, devs.NetIO_Max),
 	}
 }
 
@@ -45,13 +46,13 @@ func (e *engine) Run() error {
 }
 
 func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) {
-	udpDev := e.devices[NetIO_UDPServer]
+	udpDev := e.devices[devs.NetIO_UDPServer]
 	if udpDev != nil {
 		wg.Add(1)
 		go e.handleDevice(ctx, udpDev, wg)
 	}
 
-	tunDev := e.devices[NetIO_Local]
+	tunDev := e.devices[devs.NetIO_Local]
 	if tunDev != nil {
 		wg.Add(1)
 		go e.handleDevice(ctx, tunDev, wg)
@@ -61,10 +62,9 @@ func (e *engine) runAndWait(ctx context.Context, wg *sync.WaitGroup) {
 }
 
 func (e engine) startDevices() {
-	e.devices[NetIO_Drop] = newDrop()
-	e.devices[NetIO_UDPServer] = newUDPServer(e.conf, NetIO_UDPServer)
-	e.devices[NetIO_Local] = tun.New(e.conf, NetIO_Local)
-	e.devices[NetIO_Proxy] = newProxy()
+	e.devices[devs.NetIO_Drop] = newDrop()
+	e.devices[devs.NetIO_UDPServer] = newUDPServer(e.conf, devs.NetIO_UDPServer)
+	e.devices[devs.NetIO_Local] = tun.New(e.conf, devs.NetIO_Local)
 
 	for i, dev := range e.devices {
 		if dev == nil {
@@ -92,11 +92,11 @@ func (e *engine) cleanup() {
 	}
 }
 
-func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup) {
+func (e *engine) handleDevice(ctx context.Context, dev devs.NetIO, wg *sync.WaitGroup) {
 	defer wg.Done()
 	name := dev.Name()
 	pkt := packet.New(e.conf.MaxBufferSize)
-	egressChan := dev.EgressChan()
+	egressChan := dev.Egress()
 	logrus.Infof("Started goroutine reading from %v", name)
 
 	for {
@@ -128,7 +128,7 @@ func (e *engine) handleDevice(ctx context.Context, dev NetIO, wg *sync.WaitGroup
 		}
 
 		// Write Packet
-		outDev.IngressChan() <- pkt
+		outDev.Ingress() <- pkt
 		logrus.Infof("Sent packet %v via %v", pkt, outDevName)
 	}
 }

@@ -30,11 +30,11 @@ func (d *dropDevice) Name() string {
 	return "drop"
 }
 
-func (d dropDevice) IngressChan() chan<- *packet.Packet {
+func (d dropDevice) Ingress() chan<- *packet.Packet {
 	return d.ingress
 }
 
-func (d dropDevice) EgressChan() <-chan *packet.Packet {
+func (d dropDevice) Egress() <-chan *packet.Packet {
 	return d.egress
 }
 
