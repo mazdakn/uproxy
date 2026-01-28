@@ -1,13 +1,14 @@
 package engine
 
 import (
+	"sync/atomic"
 	"time"
 
 	"github.com/mazdakn/uproxy/pkg/packet"
 )
 
 type dropDevice struct {
-	counter         int64
+	counter         atomic.Uint64
 	ingress, egress chan *packet.Packet
 }
 
@@ -30,11 +31,11 @@ func (d *dropDevice) Name() string {
 	return "drop"
 }
 
-func (d dropDevice) Ingress() chan<- *packet.Packet {
+func (d *dropDevice) Ingress() chan<- *packet.Packet {
 	return d.ingress
 }
 
-func (d dropDevice) Egress() <-chan *packet.Packet {
+func (d *dropDevice) Egress() <-chan *packet.Packet {
 	return d.egress
 }
 
@@ -43,6 +44,6 @@ func (d *dropDevice) Read(_ *packet.Packet, _ time.Time) (int, error) {
 }
 
 func (d *dropDevice) Write(pkt *packet.Packet, _ time.Time) (int, error) {
-	d.counter++
+	d.counter.Add(1)
 	return pkt.Len(), nil
 }
